@@ -39,6 +39,11 @@ module Nox
       @detail_scroll       = 0
       @detail_height       = 20
       @content_lines       = []
+      @owner_area          = nil
+      @task_area           = nil
+      @last_click_time     = 0.0
+      @last_click_x        = -1
+      @last_click_y        = -1
     end
 
     def run
@@ -176,7 +181,7 @@ module Nox
 
       # Two-pane split — owner pane width fits longest label
       owner_width = owner_pane_width
-      owner_area, task_area = @tui.layout_split(main_area,
+      @owner_area, @task_area = @tui.layout_split(main_area,
         direction: :horizontal,
         constraints: [
           @tui.constraint_length(owner_width),
@@ -184,8 +189,8 @@ module Nox
         ]
       )
 
-      render_owner_pane(frame, owner_area)
-      render_task_pane(frame, task_area)
+      render_owner_pane(frame, @owner_area)
+      render_task_pane(frame, @task_area)
 
       # Footer — context-sensitive hints
       footer_text = if @search_mode
@@ -486,6 +491,14 @@ module Nox
         @board.search(@board.search_query + char)
         @list_state.select(0)
 
+      # ── Mouse ────────────────────────────────────────────────────────────────
+      in { type: :mouse, kind: "down", button: "left", x:, y: } if !@search_mode
+        handle_mouse_click(x, y)
+      in { type: :mouse, kind: "scroll_up", x:, y: } if !@search_mode
+        handle_mouse_scroll(:up, x, y)
+      in { type: :mouse, kind: "scroll_down", x:, y: } if !@search_mode
+        handle_mouse_scroll(:down, x, y)
+
       # ── Global ────────────────────────────────────────────────────────────────
       in { type: :key, code: "s" }
         @sprints = @client.fetch_sprints if @sprints.empty?
@@ -520,6 +533,10 @@ module Nox
         @detail_scroll = max_scroll
       in { type: :key, code: "o" }
         open_in_browser
+      in { type: :mouse, kind: "scroll_up" }
+        @detail_scroll = [@detail_scroll - 1, 0].max
+      in { type: :mouse, kind: "scroll_down" }
+        @detail_scroll = [@detail_scroll + 1, max_scroll].min
       else
         nil
       end
@@ -562,6 +579,54 @@ module Nox
     end
 
     # ── Helpers ─────────────────────────────────────────────────────────────────
+
+    def handle_mouse_click(x, y)
+      now          = Time.now.to_f
+      double_click = (now - @last_click_time < 0.4) && @last_click_x == x && @last_click_y == y
+      @last_click_time = now
+      @last_click_x    = x
+      @last_click_y    = y
+
+      if @owner_area&.contains?(x, y)
+        @active_pane = :owners
+        item_y = y - @owner_area.y - 1   # subtract top border
+        return if item_y < 0
+        owners  = @board.all_owners
+        new_idx = [(@owner_list_state.offset || 0) + item_y, owners.length].min
+        if new_idx != (@owner_list_state.selected || 0)
+          @owner_list_state.select(new_idx)
+          owner = new_idx == 0 ? nil : owners[new_idx - 1]
+          @board.filter_by_owner(owner)
+          @list_state.select(0)
+        end
+        @active_pane = :tasks if double_click
+
+      elsif @task_area&.contains?(x, y)
+        @active_pane = :tasks
+        item_y  = y - @task_area.y - 1   # subtract top border
+        return if item_y < 0
+        tasks   = @board.filtered_tasks
+        new_idx = [(@list_state.offset || 0) + item_y, tasks.length - 1].min
+        new_idx = [new_idx, 0].max
+        @board.move_to(new_idx)
+        @list_state.select(new_idx)
+        enter_detail_mode if double_click
+      end
+    end
+
+    def handle_mouse_scroll(direction, x, y)
+      if @owner_area&.contains?(x, y)
+        direction == :up ? owner_move(:up) : owner_move(:down)
+      elsif @task_area&.contains?(x, y)
+        if direction == :up
+          @board.move_up
+          @list_state.select(@board.current_row)
+        else
+          @board.move_down
+          @list_state.select(@board.current_row)
+        end
+      end
+    end
 
     def owner_move(direction)
       owners  = @board.all_owners
