@@ -6,13 +6,7 @@ source "https://rubygems.org"
 gem "notion-ruby-client", "~> 1.2"
 
 # TUI toolkit
-gem "tty-reader", "~> 0.9"
-gem "tty-cursor", "~> 0.7"
-gem "tty-screen", "~> 0.8"
-gem "tty-box", "~> 0.7"
-gem "tty-table", "~> 0.12"
-gem "pastel", "~> 0.8"
-gem "unicode-display_width", "~> 2.5"
+gem "ratatui_ruby"
 
 # Config
 gem "dotenv", "~> 2.8"

@@ -2,22 +2,13 @@
 
 module Nox
   class Board
-    attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query, :scroll_offset
+    attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query
 
     def initialize(tasks)
-      @all_tasks = sort_by_updated_desc(tasks)
+      @all_tasks      = sort_by_updated_desc(tasks)
       @filtered_tasks = @all_tasks
-      @current_row = 0
-      @search_query = ""
-      @scroll_offset = 0
-    end
-
-    def update_scroll(visible_lines)
-      if @current_row < @scroll_offset
-        @scroll_offset = @current_row
-      elsif @current_row >= @scroll_offset + visible_lines
-        @scroll_offset = @current_row - visible_lines + 1
-      end
+      @current_row    = 0
+      @search_query   = ""
     end
 
     def current_task
