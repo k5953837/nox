@@ -2,9 +2,9 @@
 
 module Nox
   class Task
-    attr_reader :id, :title, :status, :priority, :assignee, :url, :completion_time
+    attr_reader :id, :title, :status, :priority, :assignee, :url, :completion_time, :updated_at
 
-    def initialize(id:, title:, status:, priority:, assignee:, url:, completion_time:)
+    def initialize(id:, title:, status:, priority:, assignee:, url:, completion_time:, updated_at:)
       @id = id
       @title = title
       @status = status
@@ -12,6 +12,7 @@ module Nox
       @assignee = assignee
       @url = url
       @completion_time = completion_time
+      @updated_at = updated_at
     end
 
     def self.from_notion(page)
@@ -30,7 +31,8 @@ module Nox
         priority: priority,
         assignee: assignee,
         url: page.url,
-        completion_time: completion_time
+        completion_time: completion_time,
+        updated_at: page.last_edited_time
       )
     end
 

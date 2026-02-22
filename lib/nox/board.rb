@@ -2,45 +2,26 @@
 
 module Nox
   class Board
-    STATUSES = [
-      "Not started",
-      "In Progress",
-      "In Development",
-      "PR Reviewing",
-      "PM Retest",
-      "Done"
-    ].freeze
-
-    attr_reader :tasks, :columns, :current_col, :current_row
+    attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query, :scroll_offset
 
     def initialize(tasks)
-      @tasks = tasks
-      @columns = group_by_status(tasks)
-      @current_col = 0
+      @all_tasks = sort_by_updated_desc(tasks)
+      @filtered_tasks = @all_tasks
       @current_row = 0
+      @search_query = ""
+      @scroll_offset = 0
     end
 
-    def current_column_tasks
-      status = visible_statuses[current_col]
-      columns[status] || []
+    def update_scroll(visible_lines)
+      if @current_row < @scroll_offset
+        @scroll_offset = @current_row
+      elsif @current_row >= @scroll_offset + visible_lines
+        @scroll_offset = @current_row - visible_lines + 1
+      end
     end
 
     def current_task
-      current_column_tasks[current_row]
-    end
-
-    def visible_statuses
-      @visible_statuses ||= STATUSES.select { |s| columns[s]&.any? }
-    end
-
-    def move_left
-      @current_col = [current_col - 1, 0].max
-      @current_row = [current_row, current_column_tasks.length - 1].min.clamp(0, Float::INFINITY)
-    end
-
-    def move_right
-      @current_col = [current_col + 1, visible_statuses.length - 1].min
-      @current_row = [current_row, current_column_tasks.length - 1].min.clamp(0, Float::INFINITY)
+      filtered_tasks[current_row]
     end
 
     def move_up
@@ -48,35 +29,53 @@ module Nox
     end
 
     def move_down
-      max_row = [current_column_tasks.length - 1, 0].max
+      max_row = [filtered_tasks.length - 1, 0].max
       @current_row = [current_row + 1, max_row].min
     end
 
-    def refresh(tasks)
-      @tasks = tasks
-      @columns = group_by_status(tasks)
-      @visible_statuses = nil
-      @current_row = [current_row, current_column_tasks.length - 1].min.clamp(0, Float::INFINITY)
+    def search(query)
+      @search_query = query || ""
+      
+      if @search_query.empty?
+        @filtered_tasks = @all_tasks
+      else
+        @filtered_tasks = @all_tasks.select do |t|
+          t.title.downcase.include?(@search_query.downcase) ||
+            t.assignee&.downcase&.include?(@search_query.downcase) ||
+            t.priority&.downcase&.include?(@search_query.downcase) ||
+            t.status&.downcase&.include?(@search_query.downcase)
+        end
+      end
+      @current_row = 0
+      @scroll_offset = 0
     end
 
-    def filter(query)
-      return if query.nil? || query.empty?
+    def refresh(tasks)
+      @all_tasks = sort_by_updated_desc(tasks)
+      search(@search_query)
+    end
 
-      filtered = tasks.select do |t|
-        t.title.downcase.include?(query.downcase) ||
-          t.assignee&.downcase&.include?(query.downcase) ||
-          t.priority&.downcase&.include?(query.downcase)
+    def all_owners
+      @all_tasks.map(&:assignee).compact.uniq.sort
+    end
+
+    def tasks_count_by_owner
+      @all_tasks.group_by(&:assignee).transform_values(&:length)
+    end
+
+    def filter_by_owner(owner)
+      if owner.nil?
+        @filtered_tasks = @all_tasks
+      else
+        @filtered_tasks = @all_tasks.select { |t| t.assignee == owner }
       end
-      @columns = group_by_status(filtered)
-      @visible_statuses = nil
-      @current_col = 0
       @current_row = 0
     end
 
     private
 
-    def group_by_status(tasks)
-      tasks.group_by(&:status)
+    def sort_by_updated_desc(tasks)
+      tasks.sort_by { |t| t.updated_at || "" }.reverse
     end
   end
 end

@@ -12,6 +12,7 @@ gem "tty-screen", "~> 0.8"
 gem "tty-box", "~> 0.7"
 gem "tty-table", "~> 0.12"
 gem "pastel", "~> 0.8"
+gem "unicode-display_width", "~> 2.5"
 
 # Config
 gem "dotenv", "~> 2.8"
