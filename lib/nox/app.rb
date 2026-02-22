@@ -30,7 +30,6 @@ module Nox
       @loading_error       = nil
       @loading_tick        = 0
       @status_message      = nil
-      @owner_menu_idx      = 0
       @sprint_menu_idx     = 0
       @sprint_search_query = ""
       @current_sprint      = nil
@@ -175,11 +174,12 @@ module Nox
         header_area
       )
 
-      # Two-pane split
+      # Two-pane split — owner pane width fits longest label
+      owner_width = owner_pane_width
       owner_area, task_area = @tui.layout_split(main_area,
         direction: :horizontal,
         constraints: [
-          @tui.constraint_length(24),
+          @tui.constraint_length(owner_width),
           @tui.constraint_fill(1),
         ]
       )
@@ -187,11 +187,15 @@ module Nox
       render_owner_pane(frame, owner_area)
       render_task_pane(frame, task_area)
 
-      # Footer
+      # Footer — context-sensitive hints
       footer_text = if @search_mode
-        "/#{@board.search_query}█  Esc: cancel"
+        "/#{@board.search_query}█  Esc: cancel  Backspace: delete"
+      elsif @status_message
+        @status_message
+      elsif @active_pane == :owners
+        "j/k: move  g/G: first/last  Tab/Enter: → tasks  s: sprint  r: refresh  q: quit"
       else
-        @status_message || "Tab: switch pane  j/k: move  Enter: open  /: search  s: sprint  r: refresh  q: quit"
+        "j/k: move  g/G: first/last  Enter: open  /: search  o: browser  Tab: → owners  s: sprint  r: refresh  q: quit"
       end
       @status_message = nil
       frame.render_widget(
@@ -241,7 +245,14 @@ module Nox
       tasks        = @board.filtered_tasks
       active       = @active_pane == :tasks
       border_style = active ? @s_bold_cyan : @s_dim
-      title        = " Tasks (#{tasks.length}/#{@board.all_tasks.length}) "
+
+      selected_idx = @owner_list_state&.selected || 0
+      active_owner = selected_idx == 0 ? nil : @board.all_owners[selected_idx - 1]
+      title = if active_owner
+        " #{active_owner} (#{tasks.length}) "
+      else
+        " Tasks (#{tasks.length}/#{@board.all_tasks.length}) "
+      end
 
       if tasks.empty?
         frame.render_widget(
@@ -371,35 +382,12 @@ module Nox
       )
     end
 
-    def render_owner_menu(frame)
-      owners = @board.all_owners
-      counts = @board.tasks_count_by_owner
-      items  = ["(all)"] + owners.map { |o| "#{o} (#{counts[o] || 0})" }
-
-      menu_area = popup_area(frame.area, width: 44, height: [items.length + 4, 20].min)
-      frame.render_widget(@tui.clear, menu_area)
-      frame.render_widget(
-        @tui.list(
-          items:,
-          selected_index: @owner_menu_idx,
-          highlight_style: @s_selected,
-          highlight_symbol: "▸ ",
-          highlight_spacing: :always,
-          block: @tui.block(
-            title: " Filter by Owner ",
-            borders: [:all],
-            border_style: @s_bold_cyan
-          )
-        ),
-        menu_area
-      )
-    end
-
     def render_sprint_menu(frame)
       filtered = filter_sprints(@sprints, @sprint_search_query)
       items    = filtered.map do |sprint|
-        current = sprint[:id] == @current_sprint[:id] ? "● " : "  "
-        "#{current}#{sprint[:name]}"
+        current  = sprint[:id] == @current_sprint[:id] ? "● " : "  "
+        date_str = sprint_date_str(sprint)
+        "#{current}#{sprint[:name]}#{date_str}"
       end
 
       menu_area = popup_area(frame.area, width: 64, height: [filtered.length + 4, 22].min)
@@ -427,7 +415,6 @@ module Nox
       case @mode
       when :board       then handle_board_event(event)
       when :detail      then handle_detail_event(event)
-      when :owner_menu  then handle_owner_menu_event(event)
       when :sprint_menu then handle_sprint_menu_event(event)
       end
     end
@@ -455,6 +442,21 @@ module Nox
         else
           @board.move_up
           @list_state.select(@board.current_row)
+        end
+      in { type: :key, code: "g" }
+        if @active_pane == :owners
+          owner_jump(:first)
+        else
+          @board.move_to(0)
+          @list_state.select(0)
+        end
+      in { type: :key, code: "G" }
+        if @active_pane == :owners
+          owner_jump(:last)
+        else
+          last = [@board.filtered_tasks.length - 1, 0].max
+          @board.move_to(last)
+          @list_state.select(last)
         end
 
       # ── Actions ───────────────────────────────────────────────────────────────
@@ -572,6 +574,37 @@ module Nox
       owner = new_idx == 0 ? nil : owners[new_idx - 1]
       @board.filter_by_owner(owner)
       @list_state.select(0)
+    end
+
+    def owner_jump(position)
+      owners  = @board.all_owners
+      new_idx = position == :first ? 0 : owners.length
+      @owner_list_state.select(new_idx)
+      owner = new_idx == 0 ? nil : owners[new_idx - 1]
+      @board.filter_by_owner(owner)
+      @list_state.select(0)
+    end
+
+    def owner_pane_width
+      owners = @board.all_owners
+      counts = @board.tasks_count_by_owner
+      labels = ["(all)  (#{@board.all_tasks.length})"] +
+               owners.map { |o| "#{o}  (#{counts[o] || 0})" }
+      max_label = labels.map(&:length).max || 8
+      # +5 for borders (2) + highlight symbol "▸ " (2) + padding (1)
+      [[max_label + 5, 18].max, 32].min
+    end
+
+    def sprint_date_str(sprint)
+      dates = sprint[:dates]
+      return "" unless dates
+      start_date = dates["start"] || dates[:start]
+      end_date   = dates["end"]   || dates[:end]
+      return "" unless start_date
+      parts = [start_date, end_date].compact.map { |d| d[5..9] }  # MM-DD
+      "  #{parts.join(" → ")}"
+    rescue
+      ""
     end
 
     def current_task

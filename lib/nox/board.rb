@@ -24,6 +24,11 @@ module Nox
       @current_row = [current_row + 1, max_row].min
     end
 
+    def move_to(idx)
+      max_row = [filtered_tasks.length - 1, 0].max
+      @current_row = [[idx, 0].max, max_row].min
+    end
+
     def search(query)
       @search_query = query || ""
       
