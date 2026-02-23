@@ -3,6 +3,20 @@
 module Nox
   SPINNER = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
 
+  MOON_PHASES = %w[🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘].freeze
+
+  # Loading border pulses cyan → blue → magenta
+  LOADING_BORDER_PULSE = [:cyan, :cyan, :cyan, :blue, :blue, :cyan, :cyan, :cyan, :magenta, :cyan].freeze
+
+  NOX_ART = [
+    "███╗   ██╗  ██████╗  ██╗  ██╗",
+    "████╗  ██║ ██╔═══██╗ ╚██╗██╔╝",
+    "██╔██╗ ██║ ██║   ██║  ╚███╔╝ ",
+    "██║╚██╗██║ ██║   ██║  ██╔██╗ ",
+    "██║ ╚████║ ╚██████╔╝ ██╔╝ ██╗",
+    "╚═╝  ╚═══╝  ╚═════╝  ╚═╝  ╚═╝",
+  ].freeze
+
   PRIORITY_DOTS = {
     "Urgent" => "🔴",
     "High"   => "🔴",
@@ -41,6 +55,7 @@ module Nox
       @content_lines       = []
       @owner_area          = nil
       @task_area           = nil
+      @sprint_menu_area    = nil
       @last_click_time     = 0.0
       @last_click_x        = -1
       @last_click_y        = -1
@@ -52,8 +67,18 @@ module Nox
         init_styles
 
         # ── Loading phase ──────────────────────────────────────────────────────
-        loading("Finding current sprint...") do
-          @current_sprint = @client.fetch_current_sprint
+        err = loading("Connecting to Notion...") do
+          @loading_message = "Checking current sprint..."
+          @current_sprint  = @client.fetch_current_sprint
+          if @current_sprint
+            @loading_message = "✓ Current sprint: #{@current_sprint[:name]}"
+            sleep 0.4
+          end
+        end
+        if err
+          loading_error("Notion API error: #{err.message.slice(0, 44)}  Press any key to exit.")
+          @tui.poll_event
+          next
         end
 
         unless @current_sprint
@@ -62,13 +87,21 @@ module Nox
           next
         end
 
-        loading("Loading tasks for #{@current_sprint[:name]}...") do
+        err = loading("Fetching tasks...") do
           tasks = @client.fetch_tasks_by_sprint(@current_sprint[:id])
+          @loading_message = "Building board..."
           @board = Board.new(tasks)
           @list_state = RatatuiRuby::ListState.new(nil)
           @list_state.select(0) unless tasks.empty?
           @owner_list_state = RatatuiRuby::ListState.new(nil)
           @owner_list_state.select(0)
+          @loading_message = "✓ #{tasks.length} tasks ready"
+          sleep 0.3
+        end
+        if err
+          loading_error("Failed to load tasks: #{err.message.slice(0, 40)}  Press any key to exit.")
+          @tui.poll_event
+          next
         end
 
         # ── Main loop ──────────────────────────────────────────────────────────
@@ -103,8 +136,57 @@ module Nox
     end
 
     def render_loading(frame)
-      area = frame.area
+      return render_loading_error(frame) if @loading_error
 
+      area = frame.area
+      box_h = [14, area.height].min
+      box_w = [66, area.width].min
+
+      _, mid, _ = vsplit(area,
+        @tui.constraint_fill(1),
+        @tui.constraint_length(box_h),
+        @tui.constraint_fill(1)
+      )
+      _, box_area, _ = @tui.layout_split(mid, direction: :horizontal, constraints: [
+        @tui.constraint_fill(1),
+        @tui.constraint_length(box_w),
+        @tui.constraint_fill(1),
+      ])
+
+      # Pulse border: cyan with occasional blue/magenta flashes
+      pulse_color  = LOADING_BORDER_PULSE[(@loading_tick / 3) % LOADING_BORDER_PULSE.length]
+      border_style = @tui.style(fg: pulse_color, modifiers: [:bold])
+
+      # Art pulses between cyan and blue
+      art_style = (@loading_tick / 4).even? ? @s_bold_cyan : @tui.style(fg: :blue, modifiers: [:bold])
+
+      moon   = MOON_PHASES[@loading_tick / 3 % MOON_PHASES.length]
+      spin   = SPINNER[@loading_tick % SPINNER.length]
+      bounce = loading_bounce_bar(@loading_tick)
+
+      lines = [
+        @tui.text_line(spans: []),
+        *NOX_ART.map { |row| @tui.text_line(spans: [@tui.text_span(content: row, style: art_style)]) },
+        @tui.text_line(spans: [@tui.text_span(content: "Notion TUI", style: @s_dim)]),
+        @tui.text_line(spans: []),
+        @tui.text_line(spans: [
+          @tui.text_span(content: "#{moon}  "),
+          @tui.text_span(content: spin, style: border_style),
+          @tui.text_span(content: "  #{@loading_message}", style: @s_dim),
+        ]),
+        @tui.text_line(spans: [@tui.text_span(content: bounce, style: @s_dim)]),
+        @tui.text_line(spans: []),
+      ]
+
+      frame.render_widget(
+        @tui.paragraph(text: lines, alignment: :center,
+          block: @tui.block(borders: [:all], border_style:)),
+        box_area
+      )
+    end
+
+    def render_loading_error(frame)
+      area = frame.area
       _, mid, _ = vsplit(area,
         @tui.constraint_fill(1),
         @tui.constraint_length(7),
@@ -112,25 +194,11 @@ module Nox
       )
       _, box_area, _ = @tui.layout_split(mid, direction: :horizontal, constraints: [
         @tui.constraint_fill(1),
-        @tui.constraint_length(52),
+        @tui.constraint_length(60),
         @tui.constraint_fill(1),
       ])
 
-      if @loading_error
-        border_style  = @tui.style(fg: :red)
-        message_style = @tui.style(fg: :red)
-        message       = @loading_error
-        spinner_span  = @tui.text_span(content: "✗ ", style: message_style)
-      else
-        border_style  = @s_bold_cyan
-        message_style = @s_dim
-        message       = @loading_message
-        spinner_span  = @tui.text_span(
-          content: "#{SPINNER[@loading_tick % SPINNER.length]} ",
-          style: @s_bold_cyan
-        )
-      end
-
+      err_style = @tui.style(fg: :red)
       lines = [
         @tui.text_line(spans: [
           @tui.text_span(content: "🌙 "),
@@ -138,17 +206,13 @@ module Nox
         ]),
         @tui.text_line(spans: []),
         @tui.text_line(spans: [
-          spinner_span,
-          @tui.text_span(content: message, style: message_style),
+          @tui.text_span(content: "✗  ", style: err_style),
+          @tui.text_span(content: @loading_error, style: err_style),
         ]),
       ]
-
       frame.render_widget(
-        @tui.paragraph(
-          text: lines,
-          alignment: :center,
-          block: @tui.block(borders: [:all], border_style:)
-        ),
+        @tui.paragraph(text: lines, alignment: :center,
+          block: @tui.block(borders: [:all], border_style: err_style)),
         box_area
       )
     end
@@ -170,6 +234,14 @@ module Nox
       ]
       if @search_mode || !@board.search_query.empty?
         header_spans << @tui.text_span(content: "  🔍 #{@board.search_query}", style: @tui.style(fg: :magenta))
+      end
+      # Status distribution mini-bar
+      by_status = @board.filtered_tasks.group_by(&:status).transform_values(&:length)
+      header_spans << @tui.text_span(content: "  ")
+      STATUS_SYMBOLS.each do |status, (sym, color)|
+        count = by_status[status] || 0
+        next if count.zero?
+        header_spans << @tui.text_span(content: "#{sym}#{count} ", style: @tui.style(fg: color))
       end
       frame.render_widget(
         @tui.paragraph(
@@ -318,7 +390,7 @@ module Nox
         return
       end
 
-      meta_height = task.done? ? 8 : 7
+      meta_height = task.done? ? 9 : 8
       meta_area, content_area, footer_area = vsplit(
         frame.area,
         @tui.constraint_length(meta_height),
@@ -326,6 +398,10 @@ module Nox
         @tui.constraint_length(1)
       )
       @detail_height = content_area.height
+
+      idx   = @board.current_row
+      total = @board.filtered_tasks.length
+      nav   = total > 1 ? " #{idx + 1}/#{total}" : ""
 
       meta_lines = [
         @tui.text_line(spans: [
@@ -340,6 +416,10 @@ module Nox
           @tui.text_span(content: " Assignee:  "),
           @tui.text_span(content: task.assignee || "—")
         ]),
+        @tui.text_line(spans: [
+          @tui.text_span(content: " Updated:   "),
+          @tui.text_span(content: format_time(task.updated_at), style: @s_dim)
+        ]),
       ]
       if task.done?
         meta_lines << @tui.text_line(spans: [
@@ -352,7 +432,7 @@ module Nox
         @tui.paragraph(
           text: meta_lines,
           block: @tui.block(
-            title: " #{task.title} ",
+            title: " #{task.title}#{nav} ",
             borders: [:all],
             border_style: @s_bold_cyan
           )
@@ -379,7 +459,7 @@ module Nox
       frame.render_widget(
         @tui.paragraph(
           text: @tui.text_line(spans: [
-            @tui.text_span(content: " j/k: scroll  Space/b: page  g/G: top/bottom  o: open  Esc/q: back", style: @s_dim),
+            @tui.text_span(content: " j/k: scroll  Space/b: page  g/G: top/bottom  n/p: next/prev  o: open  Esc/q: back", style: @s_dim),
             @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
           ])
         ),
@@ -395,8 +475,8 @@ module Nox
         "#{current}#{sprint[:name]}#{date_str}"
       end
 
-      menu_area = popup_area(frame.area, width: 64, height: [filtered.length + 4, 22].min)
-      frame.render_widget(@tui.clear, menu_area)
+      @sprint_menu_area = popup_area(frame.area, width: 64, height: [filtered.length + 4, 22].min)
+      frame.render_widget(@tui.clear, @sprint_menu_area)
       frame.render_widget(
         @tui.list(
           items: items.empty? ? ["(no matching sprints)"] : items,
@@ -410,7 +490,7 @@ module Nox
             border_style: @s_bold_cyan
           )
         ),
-        menu_area
+        @sprint_menu_area
       )
     end
 
@@ -479,9 +559,14 @@ module Nox
         @search_mode  = true
         @active_pane  = :tasks
       in { type: :key, code: "esc" }
-        @search_mode = false
-        @board.search("")
-        @list_state.select(0)
+        if @search_mode || !@board.search_query.empty?
+          @search_mode = false
+          @board.search("")
+          @list_state.select(0)
+        else
+          # Reset owner filter back to "(all)"
+          owner_jump(:first)
+        end
       in { type: :key, code: "backspace" }
         if @search_mode
           @board.search(@board.search_query[0..-2])
@@ -531,6 +616,14 @@ module Nox
         @detail_scroll = 0
       in { type: :key, code: "g", modifiers: ["shift"] }
         @detail_scroll = max_scroll
+      in { type: :key, code: "n" }
+        @board.move_down
+        @list_state.select(@board.current_row)
+        enter_detail_mode
+      in { type: :key, code: "p" }
+        @board.move_up
+        @list_state.select(@board.current_row)
+        enter_detail_mode
       in { type: :key, code: "o" }
         open_in_browser
       in { type: :mouse, kind: "scroll_up" }
@@ -556,13 +649,13 @@ module Nox
         selected = filtered[@sprint_menu_idx]
         if selected && selected[:id] != @current_sprint[:id]
           @current_sprint = selected
-          loading("Loading #{selected[:name]}...") do
+          err = loading("Loading #{selected[:name]}...") do
             tasks = @client.fetch_tasks_by_sprint(selected[:id])
             @board = Board.new(tasks)
             @list_state.select(0)
             @owner_list_state.select(0)
           end
-          @status_message = "Switched to: #{selected[:name]}"
+          @status_message = err ? "Failed to load sprint: #{err.message.slice(0, 35)}" : "Switched to: #{selected[:name]}"
         end
         @mode = :board
       in { type: :key, code: "esc" }
@@ -573,6 +666,15 @@ module Nox
       in { type: :key, code: String => char } if char.length == 1 && char.match?(/[[:print:]]/)
         @sprint_search_query += char
         @sprint_menu_idx     = 0
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        if @sprint_menu_area&.contains?(x, y)
+          item_y = y - @sprint_menu_area.y - 1
+          if item_y >= 0
+            @sprint_menu_idx = [item_y, max_idx].min
+          end
+        else
+          @mode = :board  # click outside dismisses
+        end
       else
         nil
       end
@@ -660,6 +762,17 @@ module Nox
       [[max_label + 5, 18].max, 32].min
     end
 
+    def loading_bounce_bar(tick, width: 32)
+      period = (width - 1) * 2
+      pos    = tick % period
+      pos    = period - pos if pos >= width
+      chars  = ["░"] * width
+      chars[pos] = "█"
+      chars[[pos - 1, 0].max] = "▓" if pos >= 1
+      chars[[pos - 2, 0].max] = "▒" if pos >= 2
+      chars.join
+    end
+
     def sprint_date_str(sprint)
       dates = sprint[:dates]
       return "" unless dates
@@ -682,20 +795,25 @@ module Nox
 
       @content_lines = []
       @detail_scroll = 0
-      loading("Loading #{task.title.slice(0, 35)}...") do
+      err = loading("Loading #{task.title.slice(0, 35)}...") do
         @content_lines = @client.fetch_page_content(task.id).split("\n")
       end
-      @mode = :detail
+      if err
+        @status_message = "Error: #{err.message.slice(0, 50)}"
+        @mode = :board
+      else
+        @mode = :detail
+      end
     end
 
     def refresh
-      loading("Refreshing tasks...") do
+      err = loading("Refreshing tasks...") do
         tasks = @client.fetch_tasks_by_sprint(@current_sprint[:id])
         @board.refresh(tasks)
         @list_state.select(0)
         @owner_list_state.select(0)
       end
-      @status_message = "Refreshed! #{@board.all_tasks.length} tasks"
+      @status_message = err ? "Refresh failed: #{err.message.slice(0, 45)}" : "Refreshed! #{@board.all_tasks.length} tasks"
       @mode = :board
     end
 
@@ -733,7 +851,7 @@ module Nox
       end
 
       thread.join
-      raise error if error
+      error  # return error instead of raising; callers decide how to handle
     end
 
     def loading_error(message)
