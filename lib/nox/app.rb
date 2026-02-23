@@ -5,9 +5,6 @@ module Nox
 
   MOON_PHASES = %w[🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘].freeze
 
-  # Loading border pulses cyan → blue → magenta
-  LOADING_BORDER_PULSE = [:cyan, :cyan, :cyan, :blue, :blue, :cyan, :cyan, :cyan, :magenta, :cyan].freeze
-
   NOX_ART = [
     "███╗   ██╗  ██████╗  ██╗  ██╗",
     "████╗  ██║ ██╔═══██╗ ╚██╗██╔╝",
@@ -71,8 +68,8 @@ module Nox
           @loading_message = "Checking current sprint..."
           @current_sprint  = @client.fetch_current_sprint
           if @current_sprint
-            @loading_message = "✓ Current sprint: #{@current_sprint[:name]}"
-            sleep 0.4
+            @loading_message = "✓ Current sprint detected"
+            sleep 0.3
           end
         end
         if err
@@ -153,12 +150,9 @@ module Nox
         @tui.constraint_fill(1),
       ])
 
-      # Pulse border: cyan with occasional blue/magenta flashes
-      pulse_color  = LOADING_BORDER_PULSE[(@loading_tick / 3) % LOADING_BORDER_PULSE.length]
-      border_style = @tui.style(fg: pulse_color, modifiers: [:bold])
-
       # Art pulses between cyan and blue
-      art_style = (@loading_tick / 4).even? ? @s_bold_cyan : @tui.style(fg: :blue, modifiers: [:bold])
+      art_style  = (@loading_tick / 4).even? ? @s_bold_cyan : @tui.style(fg: :blue, modifiers: [:bold])
+      spin_style = @s_bold_cyan
 
       moon   = MOON_PHASES[@loading_tick / 3 % MOON_PHASES.length]
       spin   = SPINNER[@loading_tick % SPINNER.length]
@@ -171,7 +165,7 @@ module Nox
         @tui.text_line(spans: []),
         @tui.text_line(spans: [
           @tui.text_span(content: "#{moon}  "),
-          @tui.text_span(content: spin, style: border_style),
+          @tui.text_span(content: spin, style: spin_style),
           @tui.text_span(content: "  #{@loading_message}", style: @s_dim),
         ]),
         @tui.text_line(spans: [@tui.text_span(content: bounce, style: @s_dim)]),
@@ -179,8 +173,7 @@ module Nox
       ]
 
       frame.render_widget(
-        @tui.paragraph(text: lines, alignment: :center,
-          block: @tui.block(borders: [:all], border_style:)),
+        @tui.paragraph(text: lines, alignment: :center),
         box_area
       )
     end
@@ -211,8 +204,7 @@ module Nox
         ]),
       ]
       frame.render_widget(
-        @tui.paragraph(text: lines, alignment: :center,
-          block: @tui.block(borders: [:all], border_style: err_style)),
+        @tui.paragraph(text: lines, alignment: :center),
         box_area
       )
     end
@@ -645,19 +637,7 @@ module Nox
       in { type: :key, code: "k" | "up" }
         @sprint_menu_idx = [@sprint_menu_idx - 1, 0].max
       in { type: :key, code: "enter" }
-        return if filtered.empty?
-        selected = filtered[@sprint_menu_idx]
-        if selected && selected[:id] != @current_sprint[:id]
-          @current_sprint = selected
-          err = loading("Loading #{selected[:name]}...") do
-            tasks = @client.fetch_tasks_by_sprint(selected[:id])
-            @board = Board.new(tasks)
-            @list_state.select(0)
-            @owner_list_state.select(0)
-          end
-          @status_message = err ? "Failed to load sprint: #{err.message.slice(0, 35)}" : "Switched to: #{selected[:name]}"
-        end
-        @mode = :board
+        confirm_sprint_selection(filtered)
       in { type: :key, code: "esc" }
         @mode = :board
       in { type: :key, code: "backspace" }
@@ -670,7 +650,14 @@ module Nox
         if @sprint_menu_area&.contains?(x, y)
           item_y = y - @sprint_menu_area.y - 1
           if item_y >= 0
+            now          = Time.now.to_f
+            double_click = (now - @last_click_time < 0.4) && @last_click_x == x && @last_click_y == y
+            @last_click_time = now
+            @last_click_x    = x
+            @last_click_y    = y
+
             @sprint_menu_idx = [item_y, max_idx].min
+            confirm_sprint_selection(filtered) if double_click
           end
         else
           @mode = :board  # click outside dismisses
@@ -681,6 +668,22 @@ module Nox
     end
 
     # ── Helpers ─────────────────────────────────────────────────────────────────
+
+    def confirm_sprint_selection(filtered)
+      return if filtered.empty?
+      selected = filtered[@sprint_menu_idx]
+      if selected && selected[:id] != @current_sprint[:id]
+        @current_sprint = selected
+        err = loading("Loading #{selected[:name]}...") do
+          tasks = @client.fetch_tasks_by_sprint(selected[:id])
+          @board = Board.new(tasks)
+          @list_state.select(0)
+          @owner_list_state.select(0)
+        end
+        @status_message = err ? "Failed to load sprint: #{err.message.slice(0, 35)}" : "Switched to: #{selected[:name]}"
+      end
+      @mode = :board
+    end
 
     def handle_mouse_click(x, y)
       now          = Time.now.to_f

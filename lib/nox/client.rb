@@ -9,45 +9,25 @@ module Nox
     end
 
     def fetch_sprints
-      sprints = []
-      cursor = nil
-      
-      loop do
-        params = { database_id: @sprints_db_id, page_size: 100 }
-        params[:start_cursor] = cursor if cursor
-        
-        response = @client.database_query(**params)
-        response.results.each do |result|
-          sprints << {
-            id: result.id,
-            name: result.properties.dig("Sprint name", "title")&.first&.dig("plain_text") || "Unknown",
-            status: result.properties.dig("Sprint status", "status", "name"),
-            dates: result.properties.dig("Dates", "date")
-          }
-        end
-        break unless response.has_more
-        cursor = response.next_cursor
-      end
-      
-      sprints.sort_by { |s| s[:dates]&.dig("start") || "" }.reverse
+      fetch_all_sprints
     end
 
+    # Detects the current sprint by checking which sprint's date range contains
+    # today. Falls back to the Notion "Current" status tag if no date match found.
     def fetch_current_sprint
-      response = @client.database_query(
-        database_id: @sprints_db_id,
-        filter: { property: "Sprint status", status: { equals: "Current" } },
-        page_size: 1
-      )
-      
-      result = response.results.first
-      return nil unless result
-      
-      {
-        id: result.id,
-        name: result.properties.dig("Sprint name", "title")&.first&.dig("plain_text") || "Unknown",
-        status: result.properties.dig("Sprint status", "status", "name"),
-        dates: result.properties.dig("Dates", "date")
-      }
+      today = Date.today.to_s   # "YYYY-MM-DD"
+      all   = fetch_all_sprints
+
+      # Primary: find sprint whose [start, end] range contains today
+      by_date = all.find do |s|
+        start_d = s[:dates]&.dig("start")
+        end_d   = s[:dates]&.dig("end")
+        next false unless start_d
+        start_d <= today && (end_d.nil? || end_d >= today)
+      end
+
+      # Fallback: Notion "Current" status (may be stale)
+      by_date || all.find { |s| s[:status] == "Current" }
     end
 
     def fetch_tasks_by_sprint(sprint_id)
@@ -119,6 +99,29 @@ module Nox
     private
 
     attr_reader :client, :database_id
+
+    def fetch_all_sprints
+      sprints = []
+      cursor  = nil
+      loop do
+        params = { database_id: @sprints_db_id, page_size: 100 }
+        params[:start_cursor] = cursor if cursor
+        response = @client.database_query(**params)
+        response.results.each { |r| sprints << parse_sprint(r) }
+        break unless response.has_more
+        cursor = response.next_cursor
+      end
+      sprints.sort_by { |s| s[:dates]&.dig("start") || "" }.reverse
+    end
+
+    def parse_sprint(result)
+      {
+        id:     result.id,
+        name:   result.properties.dig("Sprint name", "title")&.first&.dig("plain_text") || "Unknown",
+        status: result.properties.dig("Sprint status", "status", "name"),
+        dates:  result.properties.dig("Dates", "date"),
+      }
+    end
 
     def blocks_to_text(blocks)
       lines = []

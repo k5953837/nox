@@ -4,6 +4,7 @@ require "dotenv/load"
 require "notion-ruby-client"
 require "ratatui_ruby"
 require "time"
+require "date"
 
 require_relative "nox/version"
 require_relative "nox/client"
