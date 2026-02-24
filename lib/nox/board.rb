@@ -52,18 +52,20 @@ module Nox
     end
 
     def all_owners
-      @all_tasks.map(&:assignee).compact.uniq.sort
+      @all_tasks.flat_map(&:owner_names).uniq.sort
     end
 
     def tasks_count_by_owner
-      @all_tasks.group_by(&:assignee).transform_values(&:length)
+      counts = Hash.new(0)
+      @all_tasks.each { |t| t.owner_names.each { |name| counts[name] += 1 } }
+      counts
     end
 
     def filter_by_owner(owner)
       if owner.nil?
         @filtered_tasks = @all_tasks
       else
-        @filtered_tasks = @all_tasks.select { |t| t.assignee == owner }
+        @filtered_tasks = @all_tasks.select { |t| t.owner_names.include?(owner) }
       end
       @current_row = 0
     end

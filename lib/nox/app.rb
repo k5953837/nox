@@ -53,6 +53,11 @@ module Nox
       @owner_area          = nil
       @task_area           = nil
       @sprint_menu_area    = nil
+      @assign_menu_idx     = 0
+      @assign_menu_area    = nil
+      @assign_selected_ids = []
+      @pre_assign_mode     = :board
+      @workspace_users     = []
       @last_click_time     = 0.0
       @last_click_x        = -1
       @last_click_y        = -1
@@ -129,6 +134,7 @@ module Nox
       when :board       then render_board(frame)
       when :detail      then render_detail(frame)
       when :sprint_menu then render_sprint_menu(frame)
+      when :assign_menu then render_assign_menu(frame)
       end
     end
 
@@ -264,7 +270,7 @@ module Nox
       elsif @active_pane == :owners
         "j/k: move  g/G: first/last  Tab/Enter: → tasks  s: sprint  r: refresh  q: quit"
       else
-        "j/k: move  g/G: first/last  Enter: open  /: search  o: browser  Tab: → owners  s: sprint  r: refresh  q: quit"
+        "j/k: move  g/G: first/last  Enter: open  /: search  a: assign  o: browser  Tab: → owners  s: sprint  r: refresh  q: quit"
       end
       @status_message = nil
       frame.render_widget(
@@ -451,7 +457,7 @@ module Nox
       frame.render_widget(
         @tui.paragraph(
           text: @tui.text_line(spans: [
-            @tui.text_span(content: " j/k: scroll  Space/b: page  g/G: top/bottom  n/p: next/prev  o: open  Esc/q: back", style: @s_dim),
+            @tui.text_span(content: " j/k: scroll  Space/b: page  g/G: top/bottom  n/p: next/prev  a: assign  o: open  Esc/q: back", style: @s_dim),
             @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
           ])
         ),
@@ -486,6 +492,34 @@ module Nox
       )
     end
 
+    def render_assign_menu(frame)
+      task  = current_task
+      users = @workspace_users
+      items = users.map { |u|
+        check = @assign_selected_ids.include?(u[:id]) ? "☑ " : "☐ "
+        "#{check}#{u[:name]}"
+      }
+
+      menu_h = [users.length + 4, 18].min
+      @assign_menu_area = popup_area(frame.area, width: 44, height: menu_h)
+      frame.render_widget(@tui.clear, @assign_menu_area)
+      frame.render_widget(
+        @tui.list(
+          items: items.empty? ? ["(no users found)"] : items,
+          selected_index: @assign_menu_idx,
+          highlight_style: @s_selected,
+          highlight_symbol: "▸ ",
+          highlight_spacing: :always,
+          block: @tui.block(
+            title: " Assign: #{task&.title&.slice(0, 20)}  Space: toggle  Enter: save ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @assign_menu_area
+      )
+    end
+
     # ── Event Handling ──────────────────────────────────────────────────────────
 
     def handle_event(event)
@@ -493,6 +527,7 @@ module Nox
       when :board       then handle_board_event(event)
       when :detail      then handle_detail_event(event)
       when :sprint_menu then handle_sprint_menu_event(event)
+      when :assign_menu then handle_assign_menu_event(event)
       end
     end
 
@@ -577,6 +612,14 @@ module Nox
         handle_mouse_scroll(:down, x, y)
 
       # ── Global ────────────────────────────────────────────────────────────────
+      in { type: :key, code: "a" }
+        if @active_pane == :tasks && current_task
+          @workspace_users = @client.fetch_users if @workspace_users.empty?
+          @assign_menu_idx     = 0
+          @assign_selected_ids = current_task.owner_ids.dup
+          @pre_assign_mode     = :board
+          @mode = :assign_menu
+        end
       in { type: :key, code: "s" }
         @sprints = @client.fetch_sprints if @sprints.empty?
         @sprint_menu_idx     = 0
@@ -616,6 +659,14 @@ module Nox
         @board.move_up
         @list_state.select(@board.current_row)
         enter_detail_mode
+      in { type: :key, code: "a" }
+        if current_task
+          @workspace_users = @client.fetch_users if @workspace_users.empty?
+          @assign_menu_idx     = 0
+          @assign_selected_ids = current_task.owner_ids.dup
+          @pre_assign_mode     = :detail
+          @mode = :assign_menu
+        end
       in { type: :key, code: "o" }
         open_in_browser
       in { type: :mouse, kind: "scroll_up" }
@@ -667,7 +718,70 @@ module Nox
       end
     end
 
+    def handle_assign_menu_event(event)
+      max_idx = [@workspace_users.length - 1, 0].max
+
+      case event
+      in { type: :key, code: "j" | "down" }
+        @assign_menu_idx = [@assign_menu_idx + 1, max_idx].min
+      in { type: :key, code: "k" | "up" }
+        @assign_menu_idx = [@assign_menu_idx - 1, 0].max
+      in { type: :key, code: " " }
+        toggle_assign_user(@assign_menu_idx)
+      in { type: :key, code: "enter" }
+        confirm_assign_selection
+      in { type: :key, code: "esc" }
+        @mode = @pre_assign_mode || :board
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        if @assign_menu_area&.contains?(x, y)
+          item_y = y - @assign_menu_area.y - 1
+          if item_y >= 0
+            clicked_idx = [item_y, max_idx].min
+            @assign_menu_idx = clicked_idx
+            toggle_assign_user(clicked_idx)
+          end
+        else
+          @mode = @pre_assign_mode || :board
+        end
+      else
+        nil
+      end
+    end
+
     # ── Helpers ─────────────────────────────────────────────────────────────────
+
+    def toggle_assign_user(idx)
+      user = @workspace_users[idx]
+      return unless user
+      if @assign_selected_ids.include?(user[:id])
+        @assign_selected_ids.delete(user[:id])
+      else
+        @assign_selected_ids << user[:id]
+      end
+    end
+
+    def confirm_assign_selection
+      task = current_task
+      return unless task
+
+      err = loading("Updating owners...") do
+        @client.update_task_owner(task.id, @assign_selected_ids)
+        task.owners = @assign_selected_ids.map { |uid|
+          u = @workspace_users.find { |w| w[:id] == uid }
+          { id: uid, name: u&.dig(:name) || "Unknown" }
+        }
+      end
+
+      names = task.assignee
+      @status_message = if err
+        "Failed to update: #{err.message.slice(0, 40)}"
+      elsif names
+        "Assigned to #{names}"
+      else
+        "Unassigned"
+      end
+      @mode = @pre_assign_mode || :board
+    end
 
     def confirm_sprint_selection(filtered)
       return if filtered.empty?
@@ -810,12 +924,25 @@ module Nox
     end
 
     def refresh
+      # Remember current owner by name so we can restore after refresh
+      saved_owner_idx  = @owner_list_state&.selected || 0
+      saved_owner_name = saved_owner_idx == 0 ? nil : @board.all_owners[saved_owner_idx - 1]
+
       err = loading("Refreshing tasks...") do
         tasks = @client.fetch_tasks_by_sprint(@current_sprint[:id])
         @board.refresh(tasks)
-        @list_state.select(0)
-        @owner_list_state.select(0)
       end
+
+      # Restore owner filter — fall back to "(all)" if owner no longer exists
+      if saved_owner_name && (new_idx = @board.all_owners.index(saved_owner_name))
+        @owner_list_state.select(new_idx + 1)
+        @board.filter_by_owner(saved_owner_name)
+      else
+        @owner_list_state.select(0)
+        @board.filter_by_owner(nil)
+      end
+      @list_state.select(0)
+
       @status_message = err ? "Refresh failed: #{err.message.slice(0, 45)}" : "Refreshed! #{@board.all_tasks.length} tasks"
       @mode = :board
     end

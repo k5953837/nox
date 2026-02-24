@@ -2,14 +2,15 @@
 
 module Nox
   class Task
-    attr_reader :id, :title, :status, :priority, :assignee, :url, :completion_time, :updated_at
+    attr_reader :id, :title, :status, :priority, :owners, :url, :completion_time, :updated_at
+    attr_writer :owners
 
-    def initialize(id:, title:, status:, priority:, assignee:, url:, completion_time:, updated_at:)
+    def initialize(id:, title:, status:, priority:, owners:, url:, completion_time:, updated_at:)
       @id = id
       @title = title
       @status = status
       @priority = priority
-      @assignee = assignee
+      @owners = owners || []
       @url = url
       @completion_time = completion_time
       @updated_at = updated_at
@@ -21,7 +22,8 @@ module Nox
       title = extract_title(props)
       status = props.dig("Status", "status", "name") || "Unknown"
       priority = props.dig("Priority", "select", "name")
-      assignee = props.dig("owner", "people")&.first&.dig("name")
+      owner_people = props.dig("owner", "people") || []
+      owners = owner_people.map { |p| { id: p["id"], name: p["name"] } }
       completion_time = props.dig("Completion Time", "date", "start")
 
       new(
@@ -29,11 +31,25 @@ module Nox
         title: title,
         status: status,
         priority: priority,
-        assignee: assignee,
+        owners: owners,
         url: page.url,
         completion_time: completion_time,
         updated_at: page.last_edited_time
       )
+    end
+
+    # Display string: comma-joined owner names, or nil if none
+    def assignee
+      names = owner_names
+      names.empty? ? nil : names.join(", ")
+    end
+
+    def owner_names
+      @owners.map { |o| o[:name] }.compact
+    end
+
+    def owner_ids
+      @owners.map { |o| o[:id] }.compact
     end
 
     def done?

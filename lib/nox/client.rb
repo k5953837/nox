@@ -70,6 +70,33 @@ module Nox
       tasks
     end
 
+    def fetch_users
+      users = []
+      cursor = nil
+      loop do
+        params = { page_size: 100 }
+        params[:start_cursor] = cursor if cursor
+        response = @client.users_list(**params)
+        response.results.each do |user|
+          next unless user.type == "person"
+          users << { id: user.id, name: user.name || "Unknown" }
+        end
+        break unless response.has_more
+        cursor = response.next_cursor
+      end
+      users.sort_by { |u| u[:name] }
+    end
+
+    def update_task_owner(task_id, user_ids)
+      people = user_ids.map { |uid| { object: "user", id: uid } }
+      @client.update_page(
+        page_id: task_id,
+        properties: {
+          "owner" => { people: people }
+        }
+      )
+    end
+
     def update_task_status(task_id, new_status)
       @client.update_page(
         page_id: task_id,
