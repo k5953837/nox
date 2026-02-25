@@ -50,6 +50,7 @@ module Nox
       @detail_scroll       = 0
       @detail_height       = 20
       @content_lines       = []
+      @detail_sub_tasks    = []
       @owner_area          = nil
       @task_area           = nil
       @sprint_menu_area    = nil
@@ -346,8 +347,10 @@ module Nox
         sym, sym_color = STATUS_SYMBOLS[task.status] || ["·", :dark_gray]
         updated        = format_time(task.updated_at)
         assignee       = task.assignee || ""
+        sub_indicator  = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
         @tui.text_line(spans: [
           @tui.text_span(content: "#{dot} #{task.title}  "),
+          @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan)),
           @tui.text_span(content: "#{sym}  ", style: @tui.style(fg: sym_color)),
           @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
         ])
@@ -388,13 +391,21 @@ module Nox
         return
       end
 
+      has_subs = !@detail_sub_tasks.empty?
+      sub_area_h = has_subs ? [@detail_sub_tasks.length + 2, 10].min : 0
       meta_height = task.done? ? 9 : 8
-      meta_area, content_area, footer_area = vsplit(
-        frame.area,
+      constraints = [
         @tui.constraint_length(meta_height),
         @tui.constraint_fill(1),
-        @tui.constraint_length(1)
-      )
+      ]
+      constraints << @tui.constraint_length(sub_area_h) if has_subs
+      constraints << @tui.constraint_length(1)
+
+      areas = vsplit(frame.area, *constraints)
+      meta_area    = areas[0]
+      content_area = areas[1]
+      sub_area     = has_subs ? areas[2] : nil
+      footer_area  = areas.last
       @detail_height = content_area.height
 
       idx   = @board.current_row
@@ -449,6 +460,30 @@ module Nox
         frame.render_widget(
           @tui.paragraph(text: lines, block: @tui.block(borders: [:bottom])),
           content_area
+        )
+      end
+
+      # Sub-tasks section
+      if has_subs && sub_area
+        sub_lines = @detail_sub_tasks.map do |st|
+          sym, sym_color = STATUS_SYMBOLS[st.status] || ["·", :dark_gray]
+          assignee = st.assignee ? "  #{st.assignee}" : ""
+          @tui.text_line(spans: [
+            @tui.text_span(content: "  #{sym} ", style: @tui.style(fg: sym_color)),
+            @tui.text_span(content: st.title),
+            @tui.text_span(content: assignee, style: @s_dim),
+          ])
+        end
+        frame.render_widget(
+          @tui.paragraph(
+            text: sub_lines,
+            block: @tui.block(
+              title: " Sub-tasks (#{@detail_sub_tasks.length}) ",
+              borders: [:top],
+              border_style: @s_dim
+            )
+          ),
+          sub_area
         )
       end
 
@@ -910,10 +945,14 @@ module Nox
       task = current_task
       return unless task
 
-      @content_lines = []
-      @detail_scroll = 0
+      @content_lines    = []
+      @detail_sub_tasks = []
+      @detail_scroll    = 0
       err = loading("Loading #{task.title.slice(0, 35)}...") do
-        @content_lines = @client.fetch_page_content(task.id).split("\n")
+        content_thread = Thread.new { @client.fetch_page_content(task.id).split("\n") }
+        sub_thread     = task.has_sub_tasks? ? Thread.new { @client.fetch_sub_tasks(task.id) } : nil
+        @content_lines    = content_thread.value
+        @detail_sub_tasks = sub_thread&.value || []
       end
       if err
         @status_message = "Error: #{err.message.slice(0, 50)}"

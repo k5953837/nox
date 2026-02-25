@@ -2,10 +2,12 @@
 
 module Nox
   class Task
-    attr_reader :id, :title, :status, :priority, :owners, :url, :completion_time, :updated_at
+    attr_reader :id, :title, :status, :priority, :owners, :url, :completion_time, :updated_at,
+                :parent_id, :sub_item_ids
     attr_writer :owners
 
-    def initialize(id:, title:, status:, priority:, owners:, url:, completion_time:, updated_at:)
+    def initialize(id:, title:, status:, priority:, owners:, url:, completion_time:, updated_at:,
+                   parent_id: nil, sub_item_ids: [])
       @id = id
       @title = title
       @status = status
@@ -14,6 +16,8 @@ module Nox
       @url = url
       @completion_time = completion_time
       @updated_at = updated_at
+      @parent_id = parent_id
+      @sub_item_ids = sub_item_ids || []
     end
 
     def self.from_notion(page)
@@ -25,6 +29,8 @@ module Nox
       owner_people = props.dig("owner", "people") || []
       owners = owner_people.map { |p| { id: p["id"], name: p["name"] } }
       completion_time = props.dig("Completion Time", "date", "start")
+      parent_rel = props.dig("Parent-task", "relation") || []
+      sub_rel    = props.dig("Sub-tasks", "relation") || []
 
       new(
         id: page.id,
@@ -34,8 +40,18 @@ module Nox
         owners: owners,
         url: page.url,
         completion_time: completion_time,
-        updated_at: page.last_edited_time
+        updated_at: page.last_edited_time,
+        parent_id: parent_rel.first&.dig("id"),
+        sub_item_ids: sub_rel.map { |r| r["id"] }
       )
+    end
+
+    def has_sub_tasks?
+      !@sub_item_ids.empty?
+    end
+
+    def sub_task?
+      !@parent_id.nil?
     end
 
     # Display string: comma-joined owner names, or nil if none

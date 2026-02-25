@@ -106,6 +106,24 @@ module Nox
       )
     end
 
+    def fetch_sub_tasks(parent_task_id)
+      tasks = []
+      cursor = nil
+      loop do
+        params = {
+          database_id: @database_id,
+          page_size: 100,
+          filter: { property: "Parent-task", relation: { contains: parent_task_id } }
+        }
+        params[:start_cursor] = cursor if cursor
+        response = @client.database_query(**params)
+        response.results.each { |r| tasks << Task.from_notion(r) }
+        break unless response.has_more
+        cursor = response.next_cursor
+      end
+      tasks
+    end
+
     def fetch_page_content(page_id)
       blocks = []
       cursor = nil

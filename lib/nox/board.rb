@@ -5,7 +5,7 @@ module Nox
     attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query
 
     def initialize(tasks)
-      @all_tasks      = sort_by_updated_desc(tasks)
+      @all_tasks      = sort_by_updated_desc(tasks.reject(&:sub_task?))
       @filtered_tasks = @all_tasks
       @current_row    = 0
       @search_query   = ""
@@ -47,7 +47,7 @@ module Nox
     end
 
     def refresh(tasks)
-      @all_tasks = sort_by_updated_desc(tasks)
+      @all_tasks = sort_by_updated_desc(tasks.reject(&:sub_task?))
       search(@search_query)
     end
 
