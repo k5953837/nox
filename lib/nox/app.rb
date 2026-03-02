@@ -607,7 +607,7 @@ module Nox
         end
 
       # ── Actions ───────────────────────────────────────────────────────────────
-      in { type: :key, code: "enter" }
+      in { type: :key, code: "enter" | "right" }
         if @active_pane == :owners
           @active_pane = :tasks  # Enter on owner → focus tasks pane
         else
@@ -672,7 +672,7 @@ module Nox
       page       = @detail_height
 
       case event
-      in { type: :key, code: "esc" | "q" }
+      in { type: :key, code: "esc" | "q" | "left" }
         @mode = :board
       in { type: :key, code: "j" | "down" }
         @detail_scroll = [@detail_scroll + 1, max_scroll].min
