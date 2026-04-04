@@ -14,6 +14,9 @@ Gemfile.lock
 *.swo
 .vscode/
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

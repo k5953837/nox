@@ -121,15 +121,19 @@ module Nox
     def init_styles
       @s_selected  = @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])
       @s_dim       = @tui.style(fg: :dark_gray)
+      @s_cyan      = @tui.style(fg: :cyan)
       @s_bold_cyan = @tui.style(fg: :cyan, modifiers: [:bold])
+      @s_h1        = @tui.style(fg: :cyan, modifiers: [:bold, :underlined])
       @s_yellow    = @tui.style(fg: :yellow)
       @s_red       = @tui.style(fg: :red)
       @s_green     = @tui.style(fg: :green)
+      @style_cache = {}
     end
 
     # ── Rendering ───────────────────────────────────────────────────────────────
 
     def render(frame)
+      @terminal_width = frame.area.width
       case @mode
       when :loading     then render_loading(frame)
       when :board       then render_board(frame)
@@ -456,7 +460,7 @@ module Nox
         )
       else
         visible = @content_lines[@detail_scroll, @detail_height] || []
-        lines   = visible.map { |l| @tui.text_line(spans: [@tui.text_span(content: "  #{l}")]) }
+        lines   = visible.map { |s| content_struct_to_line(s) }
         frame.render_widget(
           @tui.paragraph(text: lines, block: @tui.block(borders: [:bottom])),
           content_area
@@ -949,9 +953,9 @@ module Nox
       @detail_sub_tasks = []
       @detail_scroll    = 0
       err = loading("Loading #{task.title.slice(0, 35)}...") do
-        content_thread = Thread.new { @client.fetch_page_content(task.id).split("\n") }
+        content_thread = Thread.new { @client.fetch_page_content(task.id) }
         sub_thread     = task.has_sub_tasks? ? Thread.new { @client.fetch_sub_tasks(task.id) } : nil
-        @content_lines    = content_thread.value
+        @content_lines    = prepare_content(content_thread.value, width: @terminal_width || 80)
         @detail_sub_tasks = sub_thread&.value || []
       end
       if err
@@ -1077,6 +1081,283 @@ module Nox
       when "Low", "P3"            then @s_green
       else @tui.style
       end
+    end
+
+    # ── Content rendering ────────────────────────────────────────────────────────
+
+    def content_struct_to_line(s)
+      case s[:type]
+      when :heading_1
+        @tui.text_line(spans: [@tui.text_span(content: "  #{s[:cached_text]}", style: @s_h1)])
+      when :heading_2    then prefix_line("  ● ", @s_cyan, s[:runs], base_mods: [:bold])
+      when :heading_3    then prefix_line("  ○ ", @s_dim,  s[:runs], base_mods: [:bold])
+      when :empty        then empty_line
+      when :bulleted_list  then prefix_line("  • ", @s_dim, s[:runs])
+      when :numbered_list  then prefix_line("  #{s[:list_num]}. ", @s_dim, s[:runs])
+      when :todo
+        sym_style = s[:checked] ? @s_dim : @s_cyan
+        prefix_line("  #{s[:checked] ? '☑' : '☐'} ", sym_style, s[:runs])
+      when :code_fence
+        if s[:opening]
+          lang = s[:lang].to_s.empty? ? "" : " #{s[:lang]}"
+          @tui.text_line(spans: [@tui.text_span(content: "  ╭─#{lang}", style: @s_dim)])
+        else
+          @tui.text_line(spans: [@tui.text_span(content: "  ╰─", style: @s_dim)])
+        end
+      when :code_line    then prefix_line("  │ ", @s_dim,         s[:runs], force_fg: :green)
+      when :quote        then prefix_line("  │ ", @s_cyan,        s[:runs], base_mods: [:italic])
+      when :callout_open
+        @tui.text_line(spans: [@tui.text_span(content: s[:formatted_open], style: s[:bar_style])])
+      when :callout_body then prefix_line("  │  ", s[:bar_style], s[:runs])
+      when :callout_close
+        @tui.text_line(spans: [@tui.text_span(content: s[:formatted_close], style: s[:bar_style])])
+      when :toggle       then prefix_line("  ▸ ", @s_dim,         s[:runs])
+      when :table_row
+        span = s[:header] ? @tui.text_span(content: s[:formatted_content], style: @s_bold_cyan) :
+                            @tui.text_span(content: s[:formatted_content])
+        @tui.text_line(spans: [span])
+      when :table_sep
+        @tui.text_line(spans: [@tui.text_span(content: s[:formatted_sep], style: @s_dim)])
+      when :divider
+        @tui.text_line(spans: [@tui.text_span(content: "  ─────────────────────────────", style: @s_dim)])
+      when :media  then single_run_line(s, @s_dim)
+      when :error  then single_run_line(s, @s_red)
+      else
+        s[:runs].empty? ? empty_line : @tui.text_line(spans: [@tui.text_span(content: "  "), *runs_to_spans(s[:runs])])
+      end
+    end
+
+    def prefix_line(prefix, style, runs, **span_opts)
+      @tui.text_line(spans: [
+        @tui.text_span(content: prefix, style: style),
+        *runs_to_spans(runs, **span_opts),
+      ])
+    end
+
+    def empty_line
+      @tui.text_line(spans: [@tui.text_span(content: "")])
+    end
+
+    def single_run_line(s, style)
+      @tui.text_line(spans: [@tui.text_span(content: "  #{s[:runs].first&.[](:text)}", style: style)])
+    end
+
+    def runs_to_spans(runs, base_mods: [], force_fg: nil)
+      runs.map do |run|
+        # Build mods in canonical order (bold → italic → crossed_out) so no sort needed
+        mods = []
+        mods << :bold        if run[:bold]   || base_mods.include?(:bold)
+        mods << :italic      if run[:italic] || base_mods.include?(:italic)
+        mods << :crossed_out if run[:strikethrough]
+
+        fg = force_fg
+        fg ||= :green if run[:code]
+        fg ||= notion_color_to_fg(run[:color])
+
+        if mods.any? || fg
+          key   = [fg, mods]
+          style = @style_cache[key] ||= begin
+            args = {}
+            args[:fg]        = fg   if fg
+            args[:modifiers] = mods if mods.any?
+            @tui.style(**args)
+          end
+          @tui.text_span(content: run[:text], style: style)
+        else
+          @tui.text_span(content: run[:text])
+        end
+      end
+    end
+
+    def cached_style_for_color(color)
+      fg = notion_color_to_fg(color)
+      fg ? (@style_cache[[fg, []]] ||= @tui.style(fg: fg)) : @s_dim
+    end
+
+    def notion_color_to_fg(color)
+      case color
+      when "red",    "red_background"    then :red
+      when "blue",   "blue_background"   then :blue
+      when "green",  "green_background"  then :green
+      when "yellow", "yellow_background" then :yellow
+      when "orange", "orange_background" then :yellow
+      when "pink",   "pink_background"   then :magenta
+      when "purple", "purple_background" then :magenta
+      when "gray",   "gray_background"   then :dark_gray
+      when "brown",  "brown_background"  then :red
+      end
+    end
+
+    # ── Table column alignment ───────────────────────────────────────────────────
+
+    def prepare_content(structs, width: 80)
+      result = []
+      i      = 0
+      while i < structs.length
+        struct = structs[i]
+
+        case struct[:type]
+        when :heading_1
+          struct[:cached_text] = struct[:runs].map { |r| r[:text] }.join
+          result << struct
+          i += 1
+        when :callout_open
+          struct[:bar_style]      = cached_style_for_color(struct[:color])
+          struct[:formatted_open] = "  ╭─ #{struct[:icon]} " + "─" * 22
+          result << struct
+          i += 1
+        when :callout_body
+          bar_style   = cached_style_for_color(struct[:color])
+          wrap_width  = [width - 6, 1].max  # "  │  " = 5 + 1 right margin
+          wrap_runs(struct[:runs], wrap_width).each do |line_runs|
+            result << { type: :callout_body, runs: line_runs, bar_style: bar_style }
+          end
+          i += 1
+        when :callout_close
+          struct[:bar_style]       = cached_style_for_color(struct[:color])
+          struct[:formatted_close] = "  ╰" + "─" * 27
+          result << struct
+          i += 1
+        when :table_row
+          rows = []
+          seps = []
+          j    = i
+          while j < structs.length
+            case structs[j][:type]
+            when :table_row then rows << structs[j]
+            when :table_sep then seps << structs[j]
+            else break
+            end
+            j += 1
+          end
+
+          col_count   = rows.map { |r| r[:cells].length }.max || 0
+          sep_total   = [col_count - 1, 0].max * 3  # " │ " between cols
+          max_col_w   = [(width - 2 - sep_total) / [col_count, 1].max, 10].max
+          col_widths  = Array.new(col_count, 1)
+          rows.each do |row|
+            row[:cells].each_with_index do |cell, ci|
+              w = [display_width(cell.empty? ? "—" : cell), max_col_w].min
+              col_widths[ci] = [col_widths[ci], w].max
+            end
+          end
+
+          rows.each do |row|
+            row[:padded_cells] = Array.new(col_count) do |ci|
+              raw = row[:cells][ci] || ""
+              txt = raw.empty? ? "—" : raw
+              pad_to_dw(truncate_to_dw(txt, max_col_w), col_widths[ci])
+            end
+            row[:formatted_content] = "  " + row[:padded_cells].join(" │ ")
+          end
+
+          sep_str = "  " + col_widths.map { |w| "─" * w }.join("─┼─")
+          seps.each { |sep| sep[:formatted_sep] = sep_str }
+
+          result.concat(structs[i...j])
+          i = j
+        else
+          result << struct
+          i += 1
+        end
+      end
+      result
+    end
+
+    def wrap_runs(runs, max_width)
+      return [runs] if max_width <= 0
+
+      chars  = runs.flat_map { |run| run[:text].each_char.map { |c| { c: c, run: run } } }
+      lines  = []
+      buf    = []
+      buf_w  = 0
+      i      = 0
+
+      while i < chars.length
+        c  = chars[i][:c]
+        cw = char_width(c)
+
+        if buf_w + cw > max_width && !buf.empty?
+          sp = buf.rindex { |e| e[:c] == ' ' }
+          if sp && sp > 0
+            overflow = buf[(sp + 1)..]
+            lines << reconstruct_runs(buf[0, sp])
+            buf   = overflow
+            buf_w = buf.sum { |e| char_width(e[:c]) }
+          else
+            lines << reconstruct_runs(buf)
+            buf   = []
+            buf_w = 0
+          end
+        else
+          buf   << chars[i]
+          buf_w += cw
+          i     += 1
+        end
+      end
+
+      lines << reconstruct_runs(buf) unless buf.empty?
+      lines.empty? ? [runs] : lines
+    end
+
+    def reconstruct_runs(char_entries)
+      return [] if char_entries.empty?
+      result   = []
+      prev_run = char_entries.first[:run]
+      buf      = +""
+      char_entries.each do |e|
+        if e[:run].equal?(prev_run)
+          buf << e[:c]
+        else
+          result << prev_run.merge(text: buf)
+          prev_run = e[:run]
+          buf      = +e[:c]
+        end
+      end
+      result << prev_run.merge(text: buf)
+      result
+    end
+
+    def wide_char?(c)
+      o = c.ord
+      (o >= 0x1100 && o <= 0x115F)   ||  # Hangul Jamo
+      (o >= 0x2E80 && o <= 0x303E)   ||  # CJK Radicals, Kangxi
+      (o >= 0x3040 && o <= 0x33FF)   ||  # Hiragana, Katakana, CJK symbols
+      (o >= 0x3400 && o <= 0x4DBF)   ||  # CJK Extension A
+      (o >= 0x4E00 && o <= 0xA4C6)   ||  # CJK Unified Ideographs
+      (o >= 0xA960 && o <= 0xA97C)   ||  # Hangul Jamo Extended-A
+      (o >= 0xAC00 && o <= 0xD7A3)   ||  # Hangul Syllables
+      (o >= 0xF900 && o <= 0xFAFF)   ||  # CJK Compatibility
+      (o >= 0xFE10 && o <= 0xFE6B)   ||  # Vertical/Compatibility Forms
+      (o >= 0xFF01 && o <= 0xFF60)   ||  # Fullwidth ASCII
+      (o >= 0xFFE0 && o <= 0xFFE6)       # Fullwidth Signs
+    end
+
+    def char_width(c)
+      wide_char?(c) ? 2 : 1
+    end
+
+    def display_width(str)
+      str.each_char.sum { |c| char_width(c) }
+    end
+
+    def truncate_to_dw(str, max_dw)
+      w = 0
+      result = +""
+      str.each_char do |c|
+        cw = char_width(c)
+        if w + cw > max_dw - 1
+          result << "…"
+          return result
+        end
+        result << c
+        w += cw
+      end
+      result
+    end
+
+    def pad_to_dw(str, target_dw)
+      str + " " * [target_dw - display_width(str), 0].max
     end
   end
 end

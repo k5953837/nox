@@ -125,25 +125,36 @@ module Nox
     end
 
     def fetch_page_content(page_id)
-      blocks = []
-      cursor = nil
-      
-      loop do
-        params = { block_id: page_id, page_size: 100 }
-        params[:start_cursor] = cursor if cursor
-        
-        response = @client.block_children(**params)
-        blocks.concat(response.results)
-        break unless response.has_more
-        cursor = response.next_cursor
+      blocks = fetch_all_children(page_id)
+
+      table_blocks = blocks.select { |b| b.type == "table" }
+      table_rows   = if table_blocks.empty?
+        {}
+      else
+        threads = table_blocks.map { |tb| [tb.id, Thread.new { fetch_all_children(tb.id) }] }
+        threads.map { |id, t| [id, t.value] }.to_h
       end
-      
-      blocks_to_text(blocks)
+
+      blocks_to_structs(blocks, table_rows: table_rows)
     end
 
     private
 
     attr_reader :client, :database_id
+
+    def fetch_all_children(block_id)
+      children = []
+      cursor   = nil
+      loop do
+        params = { block_id: block_id, page_size: 100 }
+        params[:start_cursor] = cursor if cursor
+        response = @client.block_children(**params)
+        children.concat(response.results)
+        break unless response.has_more
+        cursor = response.next_cursor
+      end
+      children
+    end
 
     def fetch_all_sprints
       sprints = []
@@ -168,87 +179,123 @@ module Nox
       }
     end
 
-    def blocks_to_text(blocks)
-      lines = []
+    HEADING_TYPES = %w[heading_1 heading_2 heading_3].freeze
+    SPACED_TYPES  = (HEADING_TYPES + %w[callout]).freeze
+
+    def blocks_to_structs(blocks, table_rows:)
+      structs      = []
       list_counter = 0
-      prev_type = nil
-      
+      prev_type    = nil
+
       blocks.each do |block|
-        # Reset counter when leaving a numbered list
-        if block.type != "numbered_list_item" && prev_type == "numbered_list_item"
-          list_counter = 0
+        list_counter = 0 if block.type != "numbered_list_item" && prev_type == "numbered_list_item"
+        list_counter += 1 if block.type == "numbered_list_item"
+
+        structs << { type: :empty } if !structs.empty? && (SPACED_TYPES.include?(block.type) || SPACED_TYPES.include?(prev_type))
+
+        result = block_to_struct(block, list_num: list_counter, table_rows: table_rows)
+        case result
+        when Array then structs.concat(result)
+        when Hash  then structs << result
         end
-        
-        # Increment counter for numbered list items
-        if block.type == "numbered_list_item"
-          list_counter += 1
-        end
-        
-        line = block_to_text(block, list_counter)
-        lines << line if line
         prev_type = block.type
       end
-      
-      lines.join("\n")
+
+      structs
     end
 
-    def block_to_text(block, list_num = 1)
+    def block_to_struct(block, list_num: 1, table_rows:)
       case block.type
       when "paragraph"
-        rich_text_to_plain(block.paragraph.rich_text)
+        { type: :paragraph, runs: rich_text_to_runs(block.paragraph.rich_text) }
       when "heading_1"
-        "# " + rich_text_to_plain(block.heading_1.rich_text)
+        { type: :heading_1, runs: rich_text_to_runs(block.heading_1.rich_text) }
       when "heading_2"
-        "## " + rich_text_to_plain(block.heading_2.rich_text)
+        { type: :heading_2, runs: rich_text_to_runs(block.heading_2.rich_text) }
       when "heading_3"
-        "### " + rich_text_to_plain(block.heading_3.rich_text)
+        { type: :heading_3, runs: rich_text_to_runs(block.heading_3.rich_text) }
       when "bulleted_list_item"
-        "• " + rich_text_to_plain(block.bulleted_list_item.rich_text)
+        { type: :bulleted_list, runs: rich_text_to_runs(block.bulleted_list_item.rich_text) }
       when "numbered_list_item"
-        "#{list_num}. " + rich_text_to_plain(block.numbered_list_item.rich_text)
+        { type: :numbered_list, list_num: list_num, runs: rich_text_to_runs(block.numbered_list_item.rich_text) }
       when "to_do"
-        checkbox = block.to_do.checked ? "☑" : "☐"
-        "#{checkbox} " + rich_text_to_plain(block.to_do.rich_text)
+        { type: :todo, checked: block.to_do.checked || false, runs: rich_text_to_runs(block.to_do.rich_text) }
       when "code"
-        "```\n" + rich_text_to_plain(block.code.rich_text) + "\n```"
+        lang = block.code&.language || ""
+        all_text = block.code.rich_text.map(&:plain_text).join
+        lines = all_text.split("\n")
+        [{ type: :code_fence, lang: lang, opening: true }] +
+          lines.map { |l| { type: :code_line, runs: [plain_run(l)] } } +
+          [{ type: :code_fence, lang: nil, opening: false }]
       when "divider"
-        "───"
+        { type: :divider, runs: [] }
       when "image"
-        "[🖼 Image]"
+        { type: :media, runs: [plain_run("🖼  Image")] }
       when "video"
-        "[🎬 Video]"
+        { type: :media, runs: [plain_run("🎬  Video")] }
       when "file"
-        "[📎 File]"
+        { type: :media, runs: [plain_run("📎  File")] }
       when "pdf"
-        "[📄 PDF]"
+        { type: :media, runs: [plain_run("📄  PDF")] }
       when "bookmark"
-        url = block.bookmark&.url || ""
-        "[🔗 #{url}]"
+        { type: :media, runs: [plain_run("🔗  #{block.bookmark&.url || ''}")] }
       when "embed"
-        "[📦 Embed]"
+        { type: :media, runs: [plain_run("📦  Embed")] }
       when "callout"
-        emoji = block.callout&.icon&.emoji || "💡"
-        "#{emoji} " + rich_text_to_plain(block.callout.rich_text)
+        icon  = block.callout&.icon&.emoji || "💡"
+        color = block.callout&.color
+        runs  = rich_text_to_runs(block.callout.rich_text)
+        [
+          { type: :callout_open,  icon: icon, color: color },
+          { type: :callout_body,  runs: runs, color: color },
+          { type: :callout_close, color: color },
+        ]
       when "quote"
-        "> " + rich_text_to_plain(block.quote.rich_text)
+        { type: :quote, runs: rich_text_to_runs(block.quote.rich_text) }
       when "toggle"
-        "▸ " + rich_text_to_plain(block.toggle.rich_text)
+        { type: :toggle, runs: rich_text_to_runs(block.toggle.rich_text) }
       when "table_of_contents"
-        "[📑 Table of Contents]"
+        { type: :media, runs: [plain_run("📑  Table of Contents")] }
       when "child_page"
-        "[📄 #{block.child_page&.title || 'Page'}]"
+        { type: :media, runs: [plain_run("📄  #{block.child_page&.title || 'Page'}")] }
       when "child_database"
-        "[🗃 Database]"
-      else
-        nil  # 未知 block type 就跳過
+        { type: :media, runs: [plain_run("🗃  Database")] }
+      when "table"
+        rows       = table_rows[block.id] || []
+        has_header = block.table&.has_row_header || false
+        parsed     = rows.map do |row|
+          (row.table_row&.cells || []).map { |cell| cell.map(&:plain_text).join }
+        end
+        result = []
+        parsed.each_with_index do |cells, i|
+          result << { type: :table_row, cells: cells, header: has_header && i == 0 }
+          result << { type: :table_sep } if has_header && i == 0
+        end
+        result
       end
-    rescue => e
-      "[⚠ Error: #{block.type}]"
+    rescue StandardError
+      { type: :error, runs: [plain_run("[⚠ Error: #{block.type}]")] }
     end
 
-    def rich_text_to_plain(rich_text)
-      return "" unless rich_text
-      rich_text.map { |t| t.plain_text }.join
+    def rich_text_to_runs(rich_text)
+      return [] unless rich_text
+      rich_text.map do |t|
+        ann   = t.annotations
+        color = ann&.color
+        color = nil if color.nil? || color == "default"
+        {
+          text:          t.plain_text || "",
+          bold:          ann&.bold          || false,
+          italic:        ann&.italic        || false,
+          code:          ann&.code          || false,
+          strikethrough: ann&.strikethrough || false,
+          color:         color,
+        }
+      end
+    end
+
+    def plain_run(text)
+      { text: text, bold: false, italic: false, code: false, strikethrough: false, color: nil }
     end
   end
 end
