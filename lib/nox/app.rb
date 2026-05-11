@@ -380,8 +380,7 @@ module Nox
       if tasks.empty?
         frame.render_widget(
           @tui.paragraph(
-            text: "  (no tasks)",
-            style: @s_dim,
+            text: empty_task_lines(active_owner),
             block: @tui.block(title:, borders: [:all], border_style:)
           ),
           area
@@ -1162,6 +1161,27 @@ module Nox
     def filter_sprints(sprints, query)
       return sprints if query.nil? || query.empty?
       sprints.select { |s| s[:name].downcase.include?(query.downcase) }
+    end
+
+    # Context-aware empty state for the task pane.
+    # Distinguishes "no search match" / "owner has nothing" / "sprint is empty".
+    def empty_task_lines(active_owner)
+      headline, hint = if !@board.search_query.empty?
+        ["No tasks matching “#{@board.search_query}”", "Esc clear search  ·  Backspace edit"]
+      elsif active_owner
+        ["#{active_owner} has no tasks in this sprint", "Tab switch pane  ·  s switch sprint"]
+      else
+        ["This sprint has no tasks yet", "s switch sprint  ·  r refresh"]
+      end
+
+      [
+        @tui.text_line(spans: []),
+        @tui.text_line(spans: [@tui.text_span(content: "  ╶── empty ──╴", style: @s_dim)]),
+        @tui.text_line(spans: []),
+        @tui.text_line(spans: [@tui.text_span(content: "  #{headline}")]),
+        @tui.text_line(spans: []),
+        @tui.text_line(spans: [@tui.text_span(content: "  #{hint}", style: @s_yellow)]),
+      ]
     end
 
     # Maps sprint elapsed % to a moon phase glyph.
