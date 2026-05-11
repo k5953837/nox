@@ -233,19 +233,22 @@ module Nox
         @tui.constraint_length(1)
       )
 
-      # Header
-      sprint_name = @current_sprint[:name]
+      # Header — Lunar Codex: moon phase reflects sprint elapsed %
+      sprint_name  = @current_sprint[:name]
+      moon         = sprint_progress_moon(@current_sprint)
       header_spans = [
-        @tui.text_span(content: " 🌙 "),
+        @tui.text_span(content: " #{moon}  "),
         @tui.text_span(content: "nox", style: @s_bold_cyan),
-        @tui.text_span(content: "  #{sprint_name}", style: @s_yellow),
+        @tui.text_span(content: " · ", style: @s_dim),
+        @tui.text_span(content: sprint_name, style: @s_yellow),
       ]
       if @search_mode || !@board.search_query.empty?
-        header_spans << @tui.text_span(content: "  🔍 #{@board.search_query}", style: @tui.style(fg: :magenta))
+        header_spans << @tui.text_span(content: " · ", style: @s_dim)
+        header_spans << @tui.text_span(content: "/ #{@board.search_query}", style: @tui.style(fg: :magenta))
       end
-      # Status distribution mini-bar
+      # Status distribution mini-bar — separated by vertical rule
       by_status = @board.filtered_tasks.group_by(&:status).transform_values(&:length)
-      header_spans << @tui.text_span(content: "  ")
+      header_spans << @tui.text_span(content: "   │   ", style: @s_dim)
       STATUS_SYMBOLS.each do |status, (sym, color)|
         count = by_status[status] || 0
         next if count.zero?
@@ -274,13 +277,13 @@ module Nox
 
       # Footer — context-sensitive hints
       footer_text = if @search_mode
-        "/#{@board.search_query}█  Esc: cancel  Backspace: delete"
+        "/ #{@board.search_query}█ · Esc cancel · Backspace delete"
       elsif @status_message
         @status_message
       elsif @active_pane == :owners
-        "j/k: move  g/G: first/last  Tab/Enter: → tasks  s: sprint  r: refresh  q: quit"
+        "j/k move · g/G first/last · Tab/Enter → tasks · s sprint · r refresh · q quit"
       else
-        "j/k: move  Enter: open  /: search  a: assign  S: status  o: browser  Tab: → owners  s: sprint  r: refresh  q: quit"
+        "j/k move · Enter open · / search · a assign · S status · o browser · Tab → owners · s sprint · r refresh · q quit"
       end
       @status_message = nil
       frame.render_widget(
@@ -420,33 +423,19 @@ module Nox
       total = @board.filtered_tasks.length
       nav   = total > 1 ? " #{idx + 1}/#{total}" : ""
 
+      status_code, status_color = status_glyph(task.status)
+      prio_code, prio_color     = PRIORITY_LEVELS[task.priority] || ["", nil]
+      sprint_str                = @current_sprint ? "#{@current_sprint[:name]}#{sprint_date_str(@current_sprint)}" : "—"
+
       meta_lines = [
-        @tui.text_line(spans: [
-          @tui.text_span(content: " Status:    "),
-          @tui.text_span(content: task.status || "—", style: status_style(task.status))
-        ]),
-        @tui.text_line(spans: [
-          @tui.text_span(content: " Priority:  "),
-          @tui.text_span(content: task.priority || "—", style: priority_style(task.priority))
-        ]),
-        @tui.text_line(spans: [
-          @tui.text_span(content: " Assignee:  "),
-          @tui.text_span(content: task.assignee || "—")
-        ]),
-        @tui.text_line(spans: [
-          @tui.text_span(content: " Updated:   "),
-          @tui.text_span(content: format_time(task.updated_at), style: @s_dim)
-        ]),
-        @tui.text_line(spans: [
-          @tui.text_span(content: " Sprint:    "),
-          @tui.text_span(content: @current_sprint ? "#{@current_sprint[:name]}#{sprint_date_str(@current_sprint)}" : "—", style: @s_yellow)
-        ]),
+        meta_row(label: "STATUS",   code: status_code, code_color: status_color, value: task.status || "—"),
+        meta_row(label: "PRIO",     code: prio_code,   code_color: prio_color,   value: task.priority || "—"),
+        meta_row(label: "OWNER",    value: task.assignee || "—"),
+        meta_row(label: "UPDATED",  value: format_time(task.updated_at), value_style: @s_dim),
+        meta_row(label: "SPRINT",   value: sprint_str, value_style: @s_yellow),
       ]
       if task.done?
-        meta_lines << @tui.text_line(spans: [
-          @tui.text_span(content: " Completed: "),
-          @tui.text_span(content: task.completion_time || "—")
-        ])
+        meta_lines << meta_row(label: "COMPLETED", value: task.completion_time || "—")
       end
 
       frame.render_widget(
@@ -504,7 +493,7 @@ module Nox
       frame.render_widget(
         @tui.paragraph(
           text: @tui.text_line(spans: [
-            @tui.text_span(content: " j/k: scroll  Space/b: page  n/p: next/prev  a: assign  S: status  o: open  Esc/q: back", style: @s_dim),
+            @tui.text_span(content: " j/k scroll · Space/b page · n/p next/prev · a assign · S status · o open · Esc/q back", style: @s_dim),
             @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
           ])
         ),
@@ -1088,6 +1077,41 @@ module Nox
     def filter_sprints(sprints, query)
       return sprints if query.nil? || query.empty?
       sprints.select { |s| s[:name].downcase.include?(query.downcase) }
+    end
+
+    # Maps sprint elapsed % to a moon phase glyph.
+    # 0% → 🌑 new, ~50% → 🌕 full, 100% → 🌘 last waning.
+    def sprint_progress_moon(sprint)
+      return MOON_PHASES.first unless sprint && sprint[:dates] && sprint[:dates]["start"]
+      start_d = Date.parse(sprint[:dates]["start"])
+      end_d   = sprint[:dates]["end"] ? Date.parse(sprint[:dates]["end"]) : start_d
+      total   = (end_d - start_d).to_i
+      elapsed = (Date.today - start_d).to_i
+      return MOON_PHASES.first if total <= 0 || elapsed <= 0
+      return MOON_PHASES.last  if elapsed >= total
+      idx = ((elapsed.to_f / total) * (MOON_PHASES.length - 1)).round
+      MOON_PHASES[idx]
+    rescue ArgumentError
+      MOON_PHASES.first
+    end
+
+    # Editorial-style row for the detail meta panel.
+    # Format: " LABEL     CODE   VALUE" with fixed-width columns.
+    def meta_row(label:, value:, code: nil, code_color: nil, value_style: nil)
+      spans = [
+        @tui.text_span(content: " #{label.ljust(10)}", style: @s_dim),
+      ]
+      if code && !code.empty?
+        spans << @tui.text_span(content: code.ljust(5), style: @tui.style(fg: code_color || :white))
+      else
+        spans << @tui.text_span(content: " " * 5)
+      end
+      spans << if value_style
+        @tui.text_span(content: value.to_s, style: value_style)
+      else
+        @tui.text_span(content: value.to_s)
+      end
+      @tui.text_line(spans: spans)
     end
 
     def loading(message, &block)
