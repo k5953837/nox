@@ -304,18 +304,25 @@ module Nox
       render_task_pane(frame, @task_area)
 
       # Footer — context-sensitive hints
-      footer_text = if @search_mode
-        "/ #{@board.search_query}█ · Esc cancel · Backspace delete"
-      elsif @status_message
-        @status_message
+      mode_label, hints = if @search_mode
+        ["SEARCH",  "/ #{@board.search_query}█ · Esc cancel · Backspace delete"]
       elsif @active_pane == :owners
-        "j/k move · Tab/Enter → tasks · s sprint · r refresh · ? help · q quit"
+        ["OWNERS",  "j/k move · Tab/Enter → tasks · s sprint · r refresh · ? help · q quit"]
       else
-        "j/k move · Enter open · / search · S status · a assign · o browser · s sprint · ? help · q quit"
+        ["BOARD",   "j/k move · Enter open · / search · S status · a assign · o browser · s sprint · ? help · q quit"]
+      end
+
+      footer_spans = if @status_message
+        [@tui.text_span(content: @status_message, style: @s_yellow)]
+      else
+        [
+          @tui.text_span(content: " #{mode_label} ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+          @tui.text_span(content: "  #{hints}", style: @s_dim),
+        ]
       end
       @status_message = nil
       frame.render_widget(
-        @tui.paragraph(text: footer_text, style: @s_dim),
+        @tui.paragraph(text: @tui.text_line(spans: footer_spans)),
         footer_area
       )
     end
@@ -521,7 +528,8 @@ module Nox
       frame.render_widget(
         @tui.paragraph(
           text: @tui.text_line(spans: [
-            @tui.text_span(content: " j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
+            @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+            @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
             @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
           ])
         ),
