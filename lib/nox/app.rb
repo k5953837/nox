@@ -358,9 +358,9 @@ module Nox
         assignee       = task.assignee || ""
         sub_indicator  = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
         @tui.text_line(spans: [
+          @tui.text_span(content: "#{sym} ", style: @tui.style(fg: sym_color)),
           @tui.text_span(content: "#{dot} #{task.title}  "),
           @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan)),
-          @tui.text_span(content: "#{sym}  ", style: @tui.style(fg: sym_color)),
           @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
         ])
       end
