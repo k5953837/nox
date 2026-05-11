@@ -264,11 +264,13 @@ module Nox
       # Header — Lunar Codex: moon phase reflects sprint elapsed %
       sprint_name  = @current_sprint[:name]
       moon         = sprint_progress_moon(@current_sprint)
+      progress_bar = sprint_progress_bar(@current_sprint)
       header_spans = [
         @tui.text_span(content: " #{moon}  "),
         @tui.text_span(content: "nox", style: @s_bold_cyan),
         @tui.text_span(content: " · ", style: @s_dim),
         @tui.text_span(content: sprint_name, style: @s_yellow),
+        @tui.text_span(content: "  #{progress_bar}", style: @s_cyan),
       ]
       if @search_mode || !@board.search_query.empty?
         header_spans << @tui.text_span(content: " · ", style: @s_dim)
@@ -1190,20 +1192,31 @@ module Nox
       ]
     end
 
-    # Maps sprint elapsed % to a moon phase glyph.
-    # 0% → 🌑 new, ~50% → 🌕 full, 100% → 🌘 last waning.
-    def sprint_progress_moon(sprint)
-      return MOON_PHASES.first unless sprint && sprint[:dates] && sprint[:dates]["start"]
+    # Sprint elapsed % as a Unicode block bar of the given width.
+    def sprint_progress_bar(sprint, width: 8)
+      ratio = sprint_progress_ratio(sprint)
+      filled = (ratio * width).round
+      ("▰" * filled) + ("▱" * (width - filled))
+    end
+
+    # Returns [0.0..1.0] for sprint elapsed time. Tolerates missing dates.
+    def sprint_progress_ratio(sprint)
+      return 0.0 unless sprint && sprint[:dates] && sprint[:dates]["start"]
       start_d = Date.parse(sprint[:dates]["start"])
       end_d   = sprint[:dates]["end"] ? Date.parse(sprint[:dates]["end"]) : start_d
       total   = (end_d - start_d).to_i
+      return 0.0 if total <= 0
       elapsed = (Date.today - start_d).to_i
-      return MOON_PHASES.first if total <= 0 || elapsed <= 0
-      return MOON_PHASES.last  if elapsed >= total
-      idx = ((elapsed.to_f / total) * (MOON_PHASES.length - 1)).round
-      MOON_PHASES[idx]
+      [[elapsed.to_f / total, 0.0].max, 1.0].min
     rescue ArgumentError
-      MOON_PHASES.first
+      0.0
+    end
+
+    # Maps sprint elapsed % to a moon phase glyph.
+    # 0% → 🌑 new, ~50% → 🌕 full, 100% → 🌘 last waning.
+    def sprint_progress_moon(sprint)
+      idx = (sprint_progress_ratio(sprint) * (MOON_PHASES.length - 1)).round
+      MOON_PHASES[idx]
     end
 
     # Editorial-style row for the detail meta panel.
