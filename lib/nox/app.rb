@@ -519,11 +519,14 @@ module Nox
             @tui.text_span(content: assignee, style: @s_dim),
           ])
         end
+        sub_done  = @detail_sub_tasks.count(&:done?)
+        sub_total = @detail_sub_tasks.length
+        sub_bar   = density_bar(sub_done, sub_total)
         frame.render_widget(
           @tui.paragraph(
             text: sub_lines,
             block: @tui.block(
-              title: " Sub-tasks (#{@detail_sub_tasks.length}) ",
+              title: " Sub-tasks  #{sub_done}/#{sub_total} done  #{sub_bar} ",
               borders: [:top],
               border_style: @s_dim
             )
