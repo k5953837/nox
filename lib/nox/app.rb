@@ -24,12 +24,12 @@ module Nox
   }.freeze
 
   STATUS_SYMBOLS = {
-    "Done"           => ["✦", :green],
+    "Done"           => ["●", :green],
     "In Progress"    => ["▶", :yellow],
-    "In Development" => ["◈", :blue],
-    "PR Reviewing"   => ["◐", :cyan],
+    "In Development" => ["◑", :blue],
+    "PR Reviewing"   => ["◇", :cyan],
     "PM Retest"      => ["⟳", :magenta],
-    "Pending"        => ["◌", :dark_gray],
+    "Pending"        => ["⏸", :dark_gray],
     "Not started"    => ["○", :dark_gray],
   }.freeze
 
