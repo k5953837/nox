@@ -698,13 +698,44 @@ module Nox
       end
     end
 
+    # Dedicated event handler for when @search_mode is true.
+    # Short-circuits before board command dispatch so that printable chars
+    # like q / a / o / s / S that double as board hotkeys are captured as
+    # search input rather than triggering their action.
+    def handle_search_input(event)
+      case event
+      in { type: :key, code: "esc" }
+        @search_mode = false
+        @board.search("")
+        @list_state.select(0)
+      in { type: :key, code: "enter" }
+        @search_mode = false   # commit filter, exit input mode (query persists)
+      in { type: :key, code: "backspace" }
+        @board.search(@board.search_query[0..-2])
+        @list_state.select(0)
+      in { type: :key, code: "down" }
+        @board.move_down
+        @list_state.select(@board.current_row)
+      in { type: :key, code: "up" }
+        @board.move_up
+        @list_state.select(@board.current_row)
+      in { type: :key, code: String => char } if char.length == 1 && char.match?(/[[:print:]]/)
+        @board.search(@board.search_query + char)
+        @list_state.select(0)
+      else
+        nil
+      end
+    end
+
     def handle_board_event(event)
+      return handle_search_input(event) if @search_mode
+
       case event
       in { type: :key, code: "q" } | { type: :key, code: "c", modifiers: ["ctrl"] }
         :quit
 
       # ── Pane switching ────────────────────────────────────────────────────────
-      in { type: :key, code: "tab" } if !@search_mode
+      in { type: :key, code: "tab" }
         @active_pane = (@active_pane == :owners) ? :tasks : :owners
 
       # ── Navigation ────────────────────────────────────────────────────────────
@@ -748,34 +779,24 @@ module Nox
       in { type: :key, code: "o" }
         open_in_browser if @active_pane == :tasks
 
-      # ── Search ────────────────────────────────────────────────────────────────
+      # ── Search entry ──────────────────────────────────────────────────────────
       in { type: :key, code: "/" }
-        @search_mode  = true
-        @active_pane  = :tasks
+        @search_mode = true
+        @active_pane = :tasks
       in { type: :key, code: "esc" }
-        if @search_mode || !@board.search_query.empty?
-          @search_mode = false
+        if !@board.search_query.empty?
           @board.search("")
           @list_state.select(0)
         else
-          # Reset owner filter back to "(all)"
           owner_jump(:first)
         end
-      in { type: :key, code: "backspace" }
-        if @search_mode
-          @board.search(@board.search_query[0..-2])
-          @list_state.select(0)
-        end
-      in { type: :key, code: String => char } if @search_mode && char.length == 1 && char.match?(/[[:print:]]/)
-        @board.search(@board.search_query + char)
-        @list_state.select(0)
 
       # ── Mouse ────────────────────────────────────────────────────────────────
-      in { type: :mouse, kind: "down", button: "left", x:, y: } if !@search_mode
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
         handle_mouse_click(x, y)
-      in { type: :mouse, kind: "scroll_up", x:, y: } if !@search_mode
+      in { type: :mouse, kind: "scroll_up", x:, y: }
         handle_mouse_scroll(:up, x, y)
-      in { type: :mouse, kind: "scroll_down", x:, y: } if !@search_mode
+      in { type: :mouse, kind: "scroll_down", x:, y: }
         handle_mouse_scroll(:down, x, y)
 
       # ── Global ────────────────────────────────────────────────────────────────
