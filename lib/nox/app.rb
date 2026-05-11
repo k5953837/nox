@@ -339,18 +339,20 @@ module Nox
       owners        = @board.all_owners
       counts        = @board.tasks_count_by_owner
       total         = @board.all_tasks.length
+      max_count     = counts.values.max || 0
       active        = @active_pane == :owners
       border_style  = active ? @s_bold_cyan : @s_dim
 
       items = [
         @tui.text_line(spans: [
           @tui.text_span(content: "(all)"),
-          @tui.text_span(content: "  (#{total})", style: @s_dim),
+          @tui.text_span(content: "  #{density_bar(total, total)} #{total}", style: @s_dim),
         ]),
         *owners.map { |o|
+          c = counts[o] || 0
           @tui.text_line(spans: [
             @tui.text_span(content: o),
-            @tui.text_span(content: "  (#{counts[o] || 0})", style: @s_dim),
+            @tui.text_span(content: "  #{density_bar(c, max_count)} #{c}", style: @s_dim),
           ])
         }
       ]
@@ -1080,11 +1082,21 @@ module Nox
     def owner_pane_width
       owners = @board.all_owners
       counts = @board.tasks_count_by_owner
-      labels = ["(all)  (#{@board.all_tasks.length})"] +
-               owners.map { |o| "#{o}  (#{counts[o] || 0})" }
+      # name + "  " + bar (4) + " " + count
+      labels = ["(all)  #{"▰" * 4} #{@board.all_tasks.length}"] +
+               owners.map { |o| "#{o}  #{"▰" * 4} #{counts[o] || 0}" }
       max_label = labels.map(&:length).max || 8
       # +5 for borders (2) + highlight symbol "▸ " (2) + padding (1)
-      [[max_label + 5, 18].max, 32].min
+      [[max_label + 5, 22].max, 36].min
+    end
+
+    # 4-cell density bar: ratio of count to max maps to ▰ filled / ▱ empty.
+    def density_bar(count, max)
+      width  = 4
+      return "▱" * width if max <= 0
+      filled = ((count.to_f / max) * width).round
+      filled = [[filled, 0].max, width].min
+      ("▰" * filled) + ("▱" * (width - filled))
     end
 
     def loading_bounce_bar(tick, width: 32)
