@@ -266,10 +266,11 @@ module Nox
       main_area   = show_search ? areas[2] : areas[1]
       footer_area = areas.last
 
-      # Header — Lunar Codex: moon phase reflects sprint elapsed %
+      # Header — Lunar Codex: moon phase and bar share one ratio computation
       sprint_name  = @current_sprint[:name]
-      moon         = sprint_progress_moon(@current_sprint)
-      progress_bar = sprint_progress_bar(@current_sprint)
+      ratio        = sprint_progress_ratio(@current_sprint)
+      moon         = MOON_PHASES[(ratio * (MOON_PHASES.length - 1)).round]
+      progress_bar = ratio_bar(ratio, width: 8)
       header_spans = [
         @tui.text_span(content: " #{moon}  "),
         @tui.text_span(content: "nox", style: @s_bold_cyan),
@@ -277,14 +278,13 @@ module Nox
         @tui.text_span(content: sprint_name, style: @s_yellow),
         @tui.text_span(content: "  #{progress_bar}", style: @s_cyan),
       ]
-      # Task completion ratio — green emphasizes the "Done" axis
-      done_count  = @board.filtered_tasks.count(&:done?)
+
+      by_status   = @board.filtered_tasks.group_by(&:status).transform_values(&:length)
+      done_count  = by_status["Done"] || 0
       total_count = @board.filtered_tasks.length
       header_spans << @tui.text_span(content: "  ·  ", style: @s_dim)
       header_spans << @tui.text_span(content: "✓ #{done_count}/#{total_count}", style: @s_green)
 
-      # Status distribution mini-bar — separated by vertical rule
-      by_status = @board.filtered_tasks.group_by(&:status).transform_values(&:length)
       header_spans << @tui.text_span(content: "   │   ", style: @s_dim)
       STATUS_SYMBOLS.each do |status, (sym, color)|
         count = by_status[status] || 0
@@ -801,13 +801,7 @@ module Nox
 
       # ── Global ────────────────────────────────────────────────────────────────
       in { type: :key, code: "a" }
-        if @active_pane == :tasks && current_task
-          @workspace_users = @client.fetch_users if @workspace_users.empty?
-          @assign_menu_idx     = 0
-          @assign_selected_ids = current_task.owner_ids.dup
-          @previous_mode     = :board
-          @mode = :assign_menu
-        end
+        open_assign_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
         open_status_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "s" }
@@ -853,13 +847,7 @@ module Nox
         @list_state.select(@board.current_row)
         enter_detail_mode
       in { type: :key, code: "a" }
-        if current_task
-          @workspace_users = @client.fetch_users if @workspace_users.empty?
-          @assign_menu_idx     = 0
-          @assign_selected_ids = current_task.owner_ids.dup
-          @previous_mode     = :detail
-          @mode = :assign_menu
-        end
+        open_assign_menu(from: :detail)
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
         open_status_menu(from: :detail)
       in { type: :key, code: "o" }
@@ -1039,6 +1027,15 @@ module Nox
       @mode            = :status_menu
     end
 
+    def open_assign_menu(from:)
+      return unless current_task
+      @workspace_users     = @client.fetch_users if @workspace_users.empty?
+      @assign_menu_idx     = 0
+      @assign_selected_ids = current_task.owner_ids.dup
+      @previous_mode       = from
+      @mode                = :assign_menu
+    end
+
     def confirm_sprint_selection(filtered)
       return if filtered.empty?
       selected = filtered[@sprint_menu_idx]
@@ -1136,13 +1133,15 @@ module Nox
       [[max_label + 5, 22].max, 36].min
     end
 
-    # 4-cell density bar: ratio of count to max maps to ▰ filled / ▱ empty.
-    def density_bar(count, max)
-      width  = 4
-      return "▱" * width if max <= 0
-      filled = ((count.to_f / max) * width).round
-      filled = [[filled, 0].max, width].min
+    # Renders a width-cell ▰/▱ bar from a ratio in [0.0..1.0].
+    def ratio_bar(ratio, width:)
+      filled = (ratio.clamp(0.0, 1.0) * width).round
       ("▰" * filled) + ("▱" * (width - filled))
+    end
+
+    def density_bar(count, max, width: 4)
+      return "▱" * width if max <= 0
+      ratio_bar(count.to_f / max, width: width)
     end
 
     def loading_bounce_bar(tick, width: 32)
@@ -1229,7 +1228,6 @@ module Nox
       sprints.select { |s| s[:name].downcase.include?(query.downcase) }
     end
 
-    # Context-aware empty state for the task pane.
     # Distinguishes "no search match" / "owner has nothing" / "sprint is empty".
     def empty_task_lines(active_owner)
       headline, hint = if !@board.search_query.empty?
@@ -1250,11 +1248,8 @@ module Nox
       ]
     end
 
-    # Sprint elapsed % as a Unicode block bar of the given width.
     def sprint_progress_bar(sprint, width: 8)
-      ratio = sprint_progress_ratio(sprint)
-      filled = (ratio * width).round
-      ("▰" * filled) + ("▱" * (width - filled))
+      ratio_bar(sprint_progress_ratio(sprint), width: width)
     end
 
     # Returns [0.0..1.0] for sprint elapsed time. Tolerates missing dates.
@@ -1270,14 +1265,11 @@ module Nox
       0.0
     end
 
-    # Maps sprint elapsed % to a moon phase glyph.
     # 0% → 🌑 new, ~50% → 🌕 full, 100% → 🌘 last waning.
     def sprint_progress_moon(sprint)
-      idx = (sprint_progress_ratio(sprint) * (MOON_PHASES.length - 1)).round
-      MOON_PHASES[idx]
+      MOON_PHASES[(sprint_progress_ratio(sprint) * (MOON_PHASES.length - 1)).round]
     end
 
-    # Editorial-style row for the detail meta panel.
     # Format: " LABEL     CODE   VALUE" with fixed-width columns.
     def meta_row(label:, value:, code: nil, code_color: nil, value_style: nil)
       spans = [
@@ -1362,16 +1354,6 @@ module Nox
       return STATUS_SYMBOLS[status] if STATUS_SYMBOLS.key?(status)
       code = status.to_s.gsub(/[^A-Za-z0-9]/, "")[0, 3]
       [code.empty? ? "?" : code.upcase, :dark_gray]
-    end
-
-    def status_style(status)
-      _sym, color = status_glyph(status)
-      @tui.style(fg: color)
-    end
-
-    def priority_style(priority)
-      _sym, color = PRIORITY_LEVELS[priority]
-      color ? @tui.style(fg: color) : @tui.style
     end
 
     # ── Content rendering ────────────────────────────────────────────────────────
