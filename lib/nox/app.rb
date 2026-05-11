@@ -254,12 +254,25 @@ module Nox
     end
 
     def render_board(frame)
-      header_area, main_area, footer_area = vsplit(
-        frame.area,
-        @tui.constraint_length(2),
-        @tui.constraint_fill(1),
-        @tui.constraint_length(1)
-      )
+      show_search = @search_mode || !@board.search_query.empty?
+      areas = if show_search
+        vsplit(frame.area,
+          @tui.constraint_length(2),
+          @tui.constraint_length(3),
+          @tui.constraint_fill(1),
+          @tui.constraint_length(1)
+        )
+      else
+        vsplit(frame.area,
+          @tui.constraint_length(2),
+          @tui.constraint_fill(1),
+          @tui.constraint_length(1)
+        )
+      end
+      header_area = areas[0]
+      search_area = show_search ? areas[1] : nil
+      main_area   = show_search ? areas[2] : areas[1]
+      footer_area = areas.last
 
       # Header — Lunar Codex: moon phase reflects sprint elapsed %
       sprint_name  = @current_sprint[:name]
@@ -272,10 +285,6 @@ module Nox
         @tui.text_span(content: sprint_name, style: @s_yellow),
         @tui.text_span(content: "  #{progress_bar}", style: @s_cyan),
       ]
-      if @search_mode || !@board.search_query.empty?
-        header_spans << @tui.text_span(content: " · ", style: @s_dim)
-        header_spans << @tui.text_span(content: "/ #{@board.search_query}", style: @tui.style(fg: :magenta))
-      end
       # Task completion ratio — green emphasizes the "Done" axis
       done_count  = @board.filtered_tasks.count(&:done?)
       total_count = @board.filtered_tasks.length
@@ -298,6 +307,8 @@ module Nox
         header_area
       )
 
+      render_search_bar(frame, search_area) if search_area
+
       # Two-pane split — owner pane width fits longest label
       owner_width = owner_pane_width
       @owner_area, @task_area = @tui.layout_split(main_area,
@@ -313,7 +324,7 @@ module Nox
 
       # Footer — context-sensitive hints
       mode_label, hints = if @search_mode
-        ["SEARCH",  "/ #{@board.search_query}█ · Esc cancel · Backspace delete"]
+        ["SEARCH",  "type to filter · Esc cancel · Backspace delete · Enter keep filter"]
       elsif @active_pane == :owners
         ["OWNERS",  "j/k move · Tab/Enter → tasks · s sprint · r refresh · ? help · q quit"]
       else
@@ -332,6 +343,25 @@ module Nox
       frame.render_widget(
         @tui.paragraph(text: @tui.text_line(spans: footer_spans)),
         footer_area
+      )
+    end
+
+    def render_search_bar(frame, area)
+      cursor       = @search_mode ? "█" : ""
+      border_style = @search_mode ? @s_bold_cyan : @s_dim
+      hit_count    = @board.filtered_tasks.length
+      title        = @board.search_query.empty? ? " Search " : " Search  ·  #{hit_count} match#{'es' unless hit_count == 1} "
+
+      frame.render_widget(
+        @tui.paragraph(
+          text: @tui.text_line(spans: [
+            @tui.text_span(content: " / ", style: @s_bold_cyan),
+            @tui.text_span(content: @board.search_query, style: @s_yellow),
+            @tui.text_span(content: cursor, style: @s_bold_cyan),
+          ]),
+          block: @tui.block(title:, borders: [:all], border_style:)
+        ),
+        area
       )
     end
 
