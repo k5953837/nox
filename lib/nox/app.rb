@@ -33,6 +33,8 @@ module Nox
     "Not started"    => ["○", :dark_gray],
   }.freeze
 
+  STATUS_OPTIONS = STATUS_SYMBOLS.keys.freeze
+
   class App
     def initialize
       @client              = Client.new
@@ -57,10 +59,9 @@ module Nox
       @assign_menu_idx     = 0
       @assign_menu_area    = nil
       @assign_selected_ids = []
-      @pre_assign_mode     = :board
       @status_menu_idx     = 0
       @status_menu_area    = nil
-      @pre_status_mode     = :board
+      @previous_mode       = :board
       @workspace_users     = []
       @last_click_time     = 0.0
       @last_click_x        = -1
@@ -568,15 +569,14 @@ module Nox
     end
 
     def render_status_menu(frame)
-      task    = current_task
-      options = STATUS_SYMBOLS.keys
-      items   = options.map do |name|
+      task  = current_task
+      items = STATUS_OPTIONS.map do |name|
         sym, _color = STATUS_SYMBOLS[name]
         marker = (task && task.status == name) ? "●" : " "
         "#{marker} #{sym}  #{name}"
       end
 
-      menu_h = [options.length + 4, 14].min
+      menu_h = [STATUS_OPTIONS.length + 4, 14].min
       @status_menu_area = popup_area(frame.area, width: 44, height: menu_h)
       frame.render_widget(@tui.clear, @status_menu_area)
       frame.render_widget(
@@ -694,16 +694,11 @@ module Nox
           @workspace_users = @client.fetch_users if @workspace_users.empty?
           @assign_menu_idx     = 0
           @assign_selected_ids = current_task.owner_ids.dup
-          @pre_assign_mode     = :board
+          @previous_mode     = :board
           @mode = :assign_menu
         end
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
-        if @active_pane == :tasks && current_task
-          options = STATUS_SYMBOLS.keys
-          @status_menu_idx = [options.index(current_task.status) || 0, 0].max
-          @pre_status_mode = :board
-          @mode = :status_menu
-        end
+        open_status_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "s" }
         @sprints = @client.fetch_sprints if @sprints.empty?
         @sprint_menu_idx     = 0
@@ -748,16 +743,11 @@ module Nox
           @workspace_users = @client.fetch_users if @workspace_users.empty?
           @assign_menu_idx     = 0
           @assign_selected_ids = current_task.owner_ids.dup
-          @pre_assign_mode     = :detail
+          @previous_mode     = :detail
           @mode = :assign_menu
         end
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
-        if current_task
-          options = STATUS_SYMBOLS.keys
-          @status_menu_idx = [options.index(current_task.status) || 0, 0].max
-          @pre_status_mode = :detail
-          @mode = :status_menu
-        end
+        open_status_menu(from: :detail)
       in { type: :key, code: "o" }
         open_in_browser
       in { type: :mouse, kind: "scroll_up" }
@@ -822,7 +812,7 @@ module Nox
       in { type: :key, code: "enter" }
         confirm_assign_selection
       in { type: :key, code: "esc" }
-        @mode = @pre_assign_mode || :board
+        @mode = @previous_mode
       in { type: :mouse, kind: "down", button: "left", x:, y: }
         if @assign_menu_area&.contains?(x, y)
           item_y = y - @assign_menu_area.y - 1
@@ -832,7 +822,7 @@ module Nox
             toggle_assign_user(clicked_idx)
           end
         else
-          @mode = @pre_assign_mode || :board
+          @mode = @previous_mode
         end
       else
         nil
@@ -840,8 +830,7 @@ module Nox
     end
 
     def handle_status_menu_event(event)
-      options = STATUS_SYMBOLS.keys
-      max_idx = [options.length - 1, 0].max
+      max_idx = [STATUS_OPTIONS.length - 1, 0].max
 
       case event
       in { type: :key, code: "j" | "down" }
@@ -849,18 +838,18 @@ module Nox
       in { type: :key, code: "k" | "up" }
         @status_menu_idx = [@status_menu_idx - 1, 0].max
       in { type: :key, code: "enter" }
-        confirm_status_selection(options)
+        confirm_status_selection
       in { type: :key, code: "esc" }
-        @mode = @pre_status_mode || :board
+        @mode = @previous_mode
       in { type: :mouse, kind: "down", button: "left", x:, y: }
         if @status_menu_area&.contains?(x, y)
           item_y = y - @status_menu_area.y - 1
           if item_y >= 0
             @status_menu_idx = [item_y, max_idx].min
-            confirm_status_selection(options)
+            confirm_status_selection
           end
         else
-          @mode = @pre_status_mode || :board
+          @mode = @previous_mode
         end
       else
         nil
@@ -899,29 +888,27 @@ module Nox
       else
         "Unassigned"
       end
-      @mode = @pre_assign_mode || :board
+      @mode = @previous_mode
     end
 
-    def confirm_status_selection(options)
+    def confirm_status_selection
       task = current_task
-      new_status = options[@status_menu_idx]
-      unless task && new_status
-        @mode = @pre_status_mode || :board
-        return
+      new_status = STATUS_OPTIONS[@status_menu_idx]
+      if task && new_status && task.status != new_status
+        err = loading("Updating status...") do
+          @client.update_task_status(task.id, new_status)
+          task.status = new_status
+        end
+        @status_message = err ? "Failed to update: #{err.message.slice(0, 40)}" : "Status set to #{new_status}"
       end
+      @mode = @previous_mode
+    end
 
-      if task.status == new_status
-        @mode = @pre_status_mode || :board
-        return
-      end
-
-      err = loading("Updating status...") do
-        @client.update_task_status(task.id, new_status)
-        task.status = new_status
-      end
-
-      @status_message = err ? "Failed to update status: #{err.message.slice(0, 35)}" : "Status: #{new_status}"
-      @mode = @pre_status_mode || :board
+    def open_status_menu(from:)
+      return unless current_task
+      @status_menu_idx = STATUS_OPTIONS.index(current_task.status) || 0
+      @previous_mode   = from
+      @mode            = :status_menu
     end
 
     def confirm_sprint_selection(filtered)
