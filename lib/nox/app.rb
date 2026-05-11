@@ -255,20 +255,12 @@ module Nox
 
     def render_board(frame)
       show_search = @search_mode || !@board.search_query.empty?
-      areas = if show_search
-        vsplit(frame.area,
-          @tui.constraint_length(2),
-          @tui.constraint_length(3),
-          @tui.constraint_fill(1),
-          @tui.constraint_length(1)
-        )
-      else
-        vsplit(frame.area,
-          @tui.constraint_length(2),
-          @tui.constraint_fill(1),
-          @tui.constraint_length(1)
-        )
-      end
+      constraints = [@tui.constraint_length(2)]
+      constraints << @tui.constraint_length(3) if show_search
+      constraints << @tui.constraint_fill(1)
+      constraints << @tui.constraint_length(1)
+
+      areas       = vsplit(frame.area, *constraints)
       header_area = areas[0]
       search_area = show_search ? areas[1] : nil
       main_area   = show_search ? areas[2] : areas[1]
