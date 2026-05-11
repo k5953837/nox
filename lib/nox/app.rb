@@ -352,7 +352,7 @@ module Nox
       end
 
       items = tasks.map do |task|
-        sym, sym_color   = STATUS_SYMBOLS[task.status] || ["?", :dark_gray]
+        sym, sym_color   = status_glyph(task.status)
         prio, prio_color = PRIORITY_LEVELS[task.priority] || ["", :dark_gray]
         updated          = format_time(task.updated_at)
         assignee         = task.assignee || ""
@@ -480,7 +480,7 @@ module Nox
       # Sub-tasks section
       if has_subs && sub_area
         sub_lines = @detail_sub_tasks.map do |st|
-          sym, sym_color = STATUS_SYMBOLS[st.status] || ["?", :dark_gray]
+          sym, sym_color = status_glyph(st.status)
           assignee = st.assignee ? "  #{st.assignee}" : ""
           @tui.text_line(spans: [
             @tui.text_span(content: "  #{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
@@ -1154,9 +1154,15 @@ module Nox
       ""
     end
 
+    def status_glyph(status)
+      return STATUS_SYMBOLS[status] if STATUS_SYMBOLS.key?(status)
+      code = status.to_s.gsub(/[^A-Za-z0-9]/, "")[0, 3]
+      [code.empty? ? "?" : code.upcase, :dark_gray]
+    end
+
     def status_style(status)
-      _sym, color = STATUS_SYMBOLS[status]
-      color ? @tui.style(fg: color) : @s_dim
+      _sym, color = status_glyph(status)
+      @tui.style(fg: color)
     end
 
     def priority_style(priority)
