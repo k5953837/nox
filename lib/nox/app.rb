@@ -14,22 +14,22 @@ module Nox
     "╚═╝  ╚═══╝  ╚═════╝  ╚═╝  ╚═╝",
   ].freeze
 
-  PRIORITY_DOTS = {
-    "Urgent" => "🔴",
-    "High"   => "🔴",
-    "Medium" => "🟠",
-    "P1"     => "🔴",
-    "P2"     => "🟡",
-    "P3"     => "🔵"
+  PRIORITY_LEVELS = {
+    "Urgent" => ["▲", :red],
+    "High"   => ["▲", :red],
+    "P1"     => ["▲", :red],
+    "Medium" => ["▴", :yellow],
+    "P2"     => ["▴", :yellow],
+    "P3"     => ["▵", :cyan],
   }.freeze
 
   STATUS_SYMBOLS = {
-    "Done"           => ["✓", :green],
-    "In Progress"    => ["●", :yellow],
-    "In Development" => ["●", :blue],
-    "PR Reviewing"   => ["⟳", :yellow],
-    "PM Retest"      => ["✦", :magenta],
-    "Pending"        => ["⏸", :dark_gray],
+    "Done"           => ["✦", :green],
+    "In Progress"    => ["▶", :yellow],
+    "In Development" => ["◈", :blue],
+    "PR Reviewing"   => ["◐", :cyan],
+    "PM Retest"      => ["⟳", :magenta],
+    "Pending"        => ["◌", :dark_gray],
     "Not started"    => ["○", :dark_gray],
   }.freeze
 
@@ -352,14 +352,15 @@ module Nox
       end
 
       items = tasks.map do |task|
-        dot            = PRIORITY_DOTS[task.priority] || "⚪"
-        sym, sym_color = STATUS_SYMBOLS[task.status] || ["·", :dark_gray]
-        updated        = format_time(task.updated_at)
-        assignee       = task.assignee || ""
-        sub_indicator  = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
+        sym, sym_color   = STATUS_SYMBOLS[task.status] || ["·", :dark_gray]
+        prio, prio_color = PRIORITY_LEVELS[task.priority] || [" ", :dark_gray]
+        updated          = format_time(task.updated_at)
+        assignee         = task.assignee || ""
+        sub_indicator    = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
         @tui.text_line(spans: [
           @tui.text_span(content: "#{sym} ", style: @tui.style(fg: sym_color)),
-          @tui.text_span(content: "#{dot} #{task.title}  "),
+          @tui.text_span(content: "#{prio} ", style: @tui.style(fg: prio_color)),
+          @tui.text_span(content: "#{task.title}  "),
           @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan)),
           @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
         ])
@@ -1154,22 +1155,13 @@ module Nox
     end
 
     def status_style(status)
-      case status
-      when "Done"                          then @s_green
-      when "In Progress", "PR Reviewing"  then @s_yellow
-      when "In Development"               then @tui.style(fg: :blue)
-      when "PM Retest"                    then @tui.style(fg: :magenta)
-      else @s_dim
-      end
+      _sym, color = STATUS_SYMBOLS[status]
+      color ? @tui.style(fg: color) : @s_dim
     end
 
     def priority_style(priority)
-      case priority
-      when "Urgent", "High", "P1" then @s_red
-      when "Medium", "P2"         then @s_yellow
-      when "Low", "P3"            then @s_green
-      else @tui.style
-      end
+      _sym, color = PRIORITY_LEVELS[priority]
+      color ? @tui.style(fg: color) : @tui.style
     end
 
     # ── Content rendering ────────────────────────────────────────────────────────
