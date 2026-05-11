@@ -274,6 +274,12 @@ module Nox
         header_spans << @tui.text_span(content: " · ", style: @s_dim)
         header_spans << @tui.text_span(content: "/ #{@board.search_query}", style: @tui.style(fg: :magenta))
       end
+      # Task completion ratio — green emphasizes the "Done" axis
+      done_count  = @board.filtered_tasks.count(&:done?)
+      total_count = @board.filtered_tasks.length
+      header_spans << @tui.text_span(content: "  ·  ", style: @s_dim)
+      header_spans << @tui.text_span(content: "✓ #{done_count}/#{total_count}", style: @s_green)
+
       # Status distribution mini-bar — separated by vertical rule
       by_status = @board.filtered_tasks.group_by(&:status).transform_values(&:length)
       header_spans << @tui.text_span(content: "   │   ", style: @s_dim)
