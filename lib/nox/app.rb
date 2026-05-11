@@ -35,6 +35,32 @@ module Nox
 
   STATUS_OPTIONS = STATUS_SYMBOLS.keys.freeze
 
+  KEYMAP = [
+    ["NAVIGATION", [
+      ["j / k       ", "move down / up"],
+      ["g / G       ", "first / last"],
+      ["Tab         ", "switch pane"],
+      ["Enter / →   ", "open detail"],
+      ["Esc / ←     ", "back / dismiss"],
+      ["n / p       ", "next / prev task (in detail)"],
+      ["Space / b   ", "page down / up (in detail)"],
+    ]],
+    ["ACTIONS", [
+      ["S           ", "change status"],
+      ["a           ", "assign owners"],
+      ["o           ", "open in browser"],
+      ["r           ", "refresh from Notion"],
+    ]],
+    ["FILTERS", [
+      ["/           ", "search"],
+      ["s           ", "switch sprint"],
+    ]],
+    ["APP", [
+      ["?           ", "this help"],
+      ["q / Ctrl-C  ", "quit"],
+    ]],
+  ].freeze
+
   class App
     def initialize
       @client              = Client.new
@@ -61,6 +87,7 @@ module Nox
       @assign_selected_ids = []
       @status_menu_idx     = 0
       @status_menu_area    = nil
+      @help_area           = nil
       @previous_mode       = :board
       @workspace_users     = []
       @last_click_time     = 0.0
@@ -145,6 +172,7 @@ module Nox
       when :sprint_menu then render_sprint_menu(frame)
       when :assign_menu then render_assign_menu(frame)
       when :status_menu then render_status_menu(frame)
+      when :help        then render_help(frame)
       end
     end
 
@@ -281,9 +309,9 @@ module Nox
       elsif @status_message
         @status_message
       elsif @active_pane == :owners
-        "j/k move · g/G first/last · Tab/Enter → tasks · s sprint · r refresh · q quit"
+        "j/k move · Tab/Enter → tasks · s sprint · r refresh · ? help · q quit"
       else
-        "j/k move · Enter open · / search · a assign · S status · o browser · Tab → owners · s sprint · r refresh · q quit"
+        "j/k move · Enter open · / search · S status · a assign · o browser · s sprint · ? help · q quit"
       end
       @status_message = nil
       frame.render_widget(
@@ -493,7 +521,7 @@ module Nox
       frame.render_widget(
         @tui.paragraph(
           text: @tui.text_line(spans: [
-            @tui.text_span(content: " j/k scroll · Space/b page · n/p next/prev · a assign · S status · o open · Esc/q back", style: @s_dim),
+            @tui.text_span(content: " j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
             @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
           ])
         ),
@@ -556,6 +584,37 @@ module Nox
       )
     end
 
+    def render_help(frame)
+      lines = []
+      KEYMAP.each_with_index do |(section, entries), section_idx|
+        lines << @tui.text_line(spans: []) unless section_idx == 0
+        lines << @tui.text_line(spans: [
+          @tui.text_span(content: " #{section}", style: @s_bold_cyan),
+        ])
+        entries.each do |key, desc|
+          lines << @tui.text_line(spans: [
+            @tui.text_span(content: "   #{key}", style: @s_yellow),
+            @tui.text_span(content: desc, style: @s_dim),
+          ])
+        end
+      end
+
+      total_rows = KEYMAP.sum { |_, entries| entries.length + 1 } + KEYMAP.length - 1 + 2
+      @help_area = popup_area(frame.area, width: 52, height: [total_rows + 2, frame.area.height - 4].min)
+      frame.render_widget(@tui.clear, @help_area)
+      frame.render_widget(
+        @tui.paragraph(
+          text: lines,
+          block: @tui.block(
+            title: " Keyboard Shortcuts  ·  ? / Esc to dismiss ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @help_area
+      )
+    end
+
     def render_status_menu(frame)
       task  = current_task
       items = STATUS_OPTIONS.map do |name|
@@ -593,6 +652,7 @@ module Nox
       when :sprint_menu then handle_sprint_menu_event(event)
       when :assign_menu then handle_assign_menu_event(event)
       when :status_menu then handle_status_menu_event(event)
+      when :help        then handle_help_event(event)
       end
     end
 
@@ -694,6 +754,9 @@ module Nox
         @mode = :sprint_menu
       in { type: :key, code: "r" }
         refresh
+      in { type: :key, code: "?" }
+        @previous_mode = :board
+        @mode          = :help
       else
         nil
       end
@@ -738,6 +801,9 @@ module Nox
         open_status_menu(from: :detail)
       in { type: :key, code: "o" }
         open_in_browser
+      in { type: :key, code: "?" }
+        @previous_mode = :detail
+        @mode          = :help
       in { type: :mouse, kind: "scroll_up" }
         @detail_scroll = [@detail_scroll - 1, 0].max
       in { type: :mouse, kind: "scroll_down" }
@@ -839,6 +905,17 @@ module Nox
         else
           @mode = @previous_mode
         end
+      else
+        nil
+      end
+    end
+
+    def handle_help_event(event)
+      case event
+      in { type: :key, code: "?" } | { type: :key, code: "esc" } | { type: :key, code: "q" }
+        @mode = @previous_mode
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        @mode = @previous_mode unless @help_area&.contains?(x, y)
       else
         nil
       end
