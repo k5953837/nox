@@ -352,14 +352,12 @@ module Nox
       end
 
       items = tasks.map do |task|
-        sym, sym_color   = status_glyph(task.status)
-        prio, prio_color = PRIORITY_LEVELS[task.priority] || ["", :dark_gray]
-        updated          = format_time(task.updated_at)
-        assignee         = task.assignee || ""
-        sub_indicator    = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
+        sym, sym_color = status_glyph(task.status)
+        updated        = format_time(task.updated_at)
+        assignee       = task.assignee || ""
+        sub_indicator  = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
         @tui.text_line(spans: [
           @tui.text_span(content: "#{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
-          @tui.text_span(content: "#{prio.ljust(3)} ", style: @tui.style(fg: prio_color)),
           @tui.text_span(content: "#{task.title}  "),
           @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan)),
           @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
