@@ -15,22 +15,22 @@ module Nox
   ].freeze
 
   PRIORITY_LEVELS = {
-    "Urgent" => ["▲", :red],
-    "High"   => ["▲", :red],
-    "P1"     => ["▲", :red],
-    "Medium" => ["▴", :yellow],
-    "P2"     => ["▴", :yellow],
-    "P3"     => ["▵", :cyan],
+    "Urgent" => ["URG", :red],
+    "High"   => ["HI",  :red],
+    "P1"     => ["P1",  :red],
+    "Medium" => ["MED", :yellow],
+    "P2"     => ["P2",  :yellow],
+    "P3"     => ["P3",  :cyan],
   }.freeze
 
   STATUS_SYMBOLS = {
-    "Done"           => ["●", :green],
-    "In Progress"    => ["▶", :yellow],
-    "In Development" => ["◑", :blue],
-    "PR Reviewing"   => ["◇", :cyan],
-    "PM Retest"      => ["⟳", :magenta],
-    "Pending"        => ["⏸", :dark_gray],
-    "Not started"    => ["○", :dark_gray],
+    "Done"           => ["DON", :green],
+    "In Progress"    => ["WIP", :yellow],
+    "In Development" => ["DEV", :blue],
+    "PR Reviewing"   => ["RVW", :cyan],
+    "PM Retest"      => ["PMR", :magenta],
+    "Pending"        => ["HLD", :dark_gray],
+    "Not started"    => ["NEW", :dark_gray],
   }.freeze
 
   STATUS_OPTIONS = STATUS_SYMBOLS.keys.freeze
@@ -249,7 +249,7 @@ module Nox
       STATUS_SYMBOLS.each do |status, (sym, color)|
         count = by_status[status] || 0
         next if count.zero?
-        header_spans << @tui.text_span(content: "#{sym}#{count} ", style: @tui.style(fg: color))
+        header_spans << @tui.text_span(content: "#{sym} #{count}  ", style: @tui.style(fg: color))
       end
       frame.render_widget(
         @tui.paragraph(
@@ -352,14 +352,14 @@ module Nox
       end
 
       items = tasks.map do |task|
-        sym, sym_color   = STATUS_SYMBOLS[task.status] || ["·", :dark_gray]
-        prio, prio_color = PRIORITY_LEVELS[task.priority] || [" ", :dark_gray]
+        sym, sym_color   = STATUS_SYMBOLS[task.status] || ["?", :dark_gray]
+        prio, prio_color = PRIORITY_LEVELS[task.priority] || ["", :dark_gray]
         updated          = format_time(task.updated_at)
         assignee         = task.assignee || ""
         sub_indicator    = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
         @tui.text_line(spans: [
-          @tui.text_span(content: "#{sym} ", style: @tui.style(fg: sym_color)),
-          @tui.text_span(content: "#{prio} ", style: @tui.style(fg: prio_color)),
+          @tui.text_span(content: "#{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
+          @tui.text_span(content: "#{prio.ljust(3)} ", style: @tui.style(fg: prio_color)),
           @tui.text_span(content: "#{task.title}  "),
           @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan)),
           @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
@@ -480,10 +480,10 @@ module Nox
       # Sub-tasks section
       if has_subs && sub_area
         sub_lines = @detail_sub_tasks.map do |st|
-          sym, sym_color = STATUS_SYMBOLS[st.status] || ["·", :dark_gray]
+          sym, sym_color = STATUS_SYMBOLS[st.status] || ["?", :dark_gray]
           assignee = st.assignee ? "  #{st.assignee}" : ""
           @tui.text_line(spans: [
-            @tui.text_span(content: "  #{sym} ", style: @tui.style(fg: sym_color)),
+            @tui.text_span(content: "  #{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
             @tui.text_span(content: st.title),
             @tui.text_span(content: assignee, style: @s_dim),
           ])
@@ -573,8 +573,8 @@ module Nox
       task  = current_task
       items = STATUS_OPTIONS.map do |name|
         sym, _color = STATUS_SYMBOLS[name]
-        marker = (task && task.status == name) ? "●" : " "
-        "#{marker} #{sym}  #{name}"
+        marker = (task && task.status == name) ? "→" : " "
+        "#{marker} #{sym.ljust(3)}  #{name}"
       end
 
       menu_h = [STATUS_OPTIONS.length + 4, 14].min
