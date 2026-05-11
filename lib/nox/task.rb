@@ -4,7 +4,7 @@ module Nox
   class Task
     attr_reader :id, :title, :status, :priority, :owners, :url, :completion_time, :updated_at,
                 :parent_id, :sub_item_ids
-    attr_writer :owners
+    attr_writer :owners, :status
 
     def initialize(id:, title:, status:, priority:, owners:, url:, completion_time:, updated_at:,
                    parent_id: nil, sub_item_ids: [])
