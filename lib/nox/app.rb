@@ -58,6 +58,9 @@ module Nox
       @assign_menu_area    = nil
       @assign_selected_ids = []
       @pre_assign_mode     = :board
+      @status_menu_idx     = 0
+      @status_menu_area    = nil
+      @pre_status_mode     = :board
       @workspace_users     = []
       @last_click_time     = 0.0
       @last_click_x        = -1
@@ -140,6 +143,7 @@ module Nox
       when :detail      then render_detail(frame)
       when :sprint_menu then render_sprint_menu(frame)
       when :assign_menu then render_assign_menu(frame)
+      when :status_menu then render_status_menu(frame)
       end
     end
 
@@ -275,7 +279,7 @@ module Nox
       elsif @active_pane == :owners
         "j/k: move  g/G: first/last  Tab/Enter: → tasks  s: sprint  r: refresh  q: quit"
       else
-        "j/k: move  g/G: first/last  Enter: open  /: search  a: assign  o: browser  Tab: → owners  s: sprint  r: refresh  q: quit"
+        "j/k: move  Enter: open  /: search  a: assign  S: status  o: browser  Tab: → owners  s: sprint  r: refresh  q: quit"
       end
       @status_message = nil
       frame.render_widget(
@@ -397,7 +401,7 @@ module Nox
 
       has_subs = !@detail_sub_tasks.empty?
       sub_area_h = has_subs ? [@detail_sub_tasks.length + 2, 10].min : 0
-      meta_height = task.done? ? 9 : 8
+      meta_height = task.done? ? 10 : 9
       constraints = [
         @tui.constraint_length(meta_height),
         @tui.constraint_fill(1),
@@ -432,6 +436,10 @@ module Nox
         @tui.text_line(spans: [
           @tui.text_span(content: " Updated:   "),
           @tui.text_span(content: format_time(task.updated_at), style: @s_dim)
+        ]),
+        @tui.text_line(spans: [
+          @tui.text_span(content: " Sprint:    "),
+          @tui.text_span(content: @current_sprint ? "#{@current_sprint[:name]}#{sprint_date_str(@current_sprint)}" : "—", style: @s_yellow)
         ]),
       ]
       if task.done?
@@ -496,7 +504,7 @@ module Nox
       frame.render_widget(
         @tui.paragraph(
           text: @tui.text_line(spans: [
-            @tui.text_span(content: " j/k: scroll  Space/b: page  g/G: top/bottom  n/p: next/prev  a: assign  o: open  Esc/q: back", style: @s_dim),
+            @tui.text_span(content: " j/k: scroll  Space/b: page  n/p: next/prev  a: assign  S: status  o: open  Esc/q: back", style: @s_dim),
             @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
           ])
         ),
@@ -559,6 +567,35 @@ module Nox
       )
     end
 
+    def render_status_menu(frame)
+      task    = current_task
+      options = STATUS_SYMBOLS.keys
+      items   = options.map do |name|
+        sym, _color = STATUS_SYMBOLS[name]
+        marker = (task && task.status == name) ? "●" : " "
+        "#{marker} #{sym}  #{name}"
+      end
+
+      menu_h = [options.length + 4, 14].min
+      @status_menu_area = popup_area(frame.area, width: 44, height: menu_h)
+      frame.render_widget(@tui.clear, @status_menu_area)
+      frame.render_widget(
+        @tui.list(
+          items: items,
+          selected_index: @status_menu_idx,
+          highlight_style: @s_selected,
+          highlight_symbol: "▸ ",
+          highlight_spacing: :always,
+          block: @tui.block(
+            title: " Status: #{task&.title&.slice(0, 18)}  Enter: save  Esc: cancel ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @status_menu_area
+      )
+    end
+
     # ── Event Handling ──────────────────────────────────────────────────────────
 
     def handle_event(event)
@@ -567,6 +604,7 @@ module Nox
       when :detail      then handle_detail_event(event)
       when :sprint_menu then handle_sprint_menu_event(event)
       when :assign_menu then handle_assign_menu_event(event)
+      when :status_menu then handle_status_menu_event(event)
       end
     end
 
@@ -659,6 +697,13 @@ module Nox
           @pre_assign_mode     = :board
           @mode = :assign_menu
         end
+      in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
+        if @active_pane == :tasks && current_task
+          options = STATUS_SYMBOLS.keys
+          @status_menu_idx = [options.index(current_task.status) || 0, 0].max
+          @pre_status_mode = :board
+          @mode = :status_menu
+        end
       in { type: :key, code: "s" }
         @sprints = @client.fetch_sprints if @sprints.empty?
         @sprint_menu_idx     = 0
@@ -705,6 +750,13 @@ module Nox
           @assign_selected_ids = current_task.owner_ids.dup
           @pre_assign_mode     = :detail
           @mode = :assign_menu
+        end
+      in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
+        if current_task
+          options = STATUS_SYMBOLS.keys
+          @status_menu_idx = [options.index(current_task.status) || 0, 0].max
+          @pre_status_mode = :detail
+          @mode = :status_menu
         end
       in { type: :key, code: "o" }
         open_in_browser
@@ -787,6 +839,34 @@ module Nox
       end
     end
 
+    def handle_status_menu_event(event)
+      options = STATUS_SYMBOLS.keys
+      max_idx = [options.length - 1, 0].max
+
+      case event
+      in { type: :key, code: "j" | "down" }
+        @status_menu_idx = [@status_menu_idx + 1, max_idx].min
+      in { type: :key, code: "k" | "up" }
+        @status_menu_idx = [@status_menu_idx - 1, 0].max
+      in { type: :key, code: "enter" }
+        confirm_status_selection(options)
+      in { type: :key, code: "esc" }
+        @mode = @pre_status_mode || :board
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        if @status_menu_area&.contains?(x, y)
+          item_y = y - @status_menu_area.y - 1
+          if item_y >= 0
+            @status_menu_idx = [item_y, max_idx].min
+            confirm_status_selection(options)
+          end
+        else
+          @mode = @pre_status_mode || :board
+        end
+      else
+        nil
+      end
+    end
+
     # ── Helpers ─────────────────────────────────────────────────────────────────
 
     def toggle_assign_user(idx)
@@ -820,6 +900,28 @@ module Nox
         "Unassigned"
       end
       @mode = @pre_assign_mode || :board
+    end
+
+    def confirm_status_selection(options)
+      task = current_task
+      new_status = options[@status_menu_idx]
+      unless task && new_status
+        @mode = @pre_status_mode || :board
+        return
+      end
+
+      if task.status == new_status
+        @mode = @pre_status_mode || :board
+        return
+      end
+
+      err = loading("Updating status...") do
+        @client.update_task_status(task.id, new_status)
+        task.status = new_status
+      end
+
+      @status_message = err ? "Failed to update status: #{err.message.slice(0, 35)}" : "Status: #{new_status}"
+      @mode = @pre_status_mode || :board
     end
 
     def confirm_sprint_selection(filtered)
