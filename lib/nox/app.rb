@@ -367,7 +367,7 @@ module Nox
       items = [
         @tui.text_line(spans: [
           @tui.text_span(content: "(all)"),
-          @tui.text_span(content: "  #{density_bar(total, total)} #{total}", style: @s_dim),
+          @tui.text_span(content: "  #{total}", style: @s_dim),
         ]),
         *owners.map { |o|
           c = counts[o] || 0
