@@ -361,7 +361,6 @@ module Nox
       owners        = @board.all_owners
       counts        = @board.tasks_count_by_owner
       total         = @board.all_tasks.length
-      max_count     = counts.values.max || 0
       active        = @active_pane == :owners
       border_style  = active ? @s_bold_cyan : @s_dim
 
@@ -374,7 +373,7 @@ module Nox
           c = counts[o] || 0
           @tui.text_line(spans: [
             @tui.text_span(content: o),
-            @tui.text_span(content: "  #{density_bar(c, max_count)} #{c}", style: @s_dim),
+            @tui.text_span(content: "  #{density_bar(c, total)} #{c}", style: @s_dim),
           ])
         }
       ]
