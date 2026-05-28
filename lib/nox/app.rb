@@ -424,12 +424,15 @@ module Nox
         updated        = format_time(task.updated_at)
         assignee       = task.assignee || ""
         sub_indicator  = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
-        @tui.text_line(spans: [
-          @tui.text_span(content: "#{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
-          @tui.text_span(content: "#{task.title}  "),
-          @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan)),
-          @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
-        ])
+
+        spans = [@tui.text_span(content: "#{sym.ljust(3)} ", style: @tui.style(fg: sym_color))]
+        if (prio = priority_glyph(task.priority))
+          spans << @tui.text_span(content: "#{prio[0].ljust(3)} ", style: @tui.style(fg: prio[1]))
+        end
+        spans << @tui.text_span(content: "#{task.title}  ")
+        spans << @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan))
+        spans << @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim)
+        @tui.text_line(spans: spans)
       end
 
       frame.render_stateful_widget(
@@ -1352,6 +1355,15 @@ module Nox
     def status_glyph(status)
       return STATUS_SYMBOLS[status] if STATUS_SYMBOLS.key?(status)
       code = status.to_s.gsub(/[^A-Za-z0-9]/, "")[0, 3]
+      [code.empty? ? "?" : code.upcase, :dark_gray]
+    end
+
+    # Returns [code, color] for a set priority, or nil when unset — callers
+    # skip the column entirely so unset tasks don't show a hollow placeholder.
+    def priority_glyph(priority)
+      return nil if priority.nil? || priority.empty?
+      return PRIORITY_LEVELS[priority] if PRIORITY_LEVELS.key?(priority)
+      code = priority.gsub(/[^A-Za-z0-9]/, "")[0, 3]
       [code.empty? ? "?" : code.upcase, :dark_gray]
     end
 
