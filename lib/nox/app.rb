@@ -53,6 +53,7 @@ module Nox
     ]],
     ["FILTERS", [
       ["/           ", "search"],
+      ["f           ", "filter by status"],
       ["s           ", "switch sprint"],
     ]],
     ["APP", [
@@ -87,6 +88,9 @@ module Nox
       @assign_selected_ids = []
       @status_menu_idx     = 0
       @status_menu_area    = nil
+      @status_filter_idx      = 0
+      @status_filter_area     = nil
+      @status_filter_selected = []
       @help_area           = nil
       @previous_mode       = :board
       @workspace_users     = []
@@ -172,6 +176,7 @@ module Nox
       when :sprint_menu then render_sprint_menu(frame)
       when :assign_menu then render_assign_menu(frame)
       when :status_menu then render_status_menu(frame)
+      when :status_filter then render_status_filter(frame)
       when :help        then render_help(frame)
       end
     end
@@ -279,9 +284,9 @@ module Nox
         @tui.text_span(content: "  #{progress_bar}", style: @s_cyan),
       ]
 
-      by_status   = @board.filtered_tasks.group_by(&:status).transform_values(&:length)
+      by_status   = @board.status_counts
       done_count  = by_status["Done"] || 0
-      total_count = @board.filtered_tasks.length
+      total_count = by_status.values.sum
       header_spans << @tui.text_span(content: "  ·  ", style: @s_dim)
       header_spans << @tui.text_span(content: "✓ #{done_count}/#{total_count}", style: @s_green)
 
@@ -318,9 +323,9 @@ module Nox
       mode_label, hints = if @search_mode
         ["SEARCH",  "type to filter · Esc cancel · Backspace delete · Enter keep filter"]
       elsif @active_pane == :owners
-        ["OWNERS",  "j/k move · Tab/Enter → tasks · s sprint · r refresh · ? help · q quit"]
+        ["OWNERS",  "j/k move · Tab/Enter → tasks · f filter · s sprint · r refresh · ? help · q quit"]
       else
-        ["BOARD",   "j/k move · Enter open · / search · S status · a assign · o browser · s sprint · ? help · q quit"]
+        ["BOARD",   "j/k move · Enter open · / search · f filter · S status · a assign · o browser · s sprint · ? help · q quit"]
       end
 
       footer_spans = if @status_message
@@ -402,11 +407,9 @@ module Nox
 
       selected_idx = @owner_list_state&.selected || 0
       active_owner = selected_idx == 0 ? nil : @board.all_owners[selected_idx - 1]
-      title = if active_owner
-        " #{active_owner} (#{tasks.length}) "
-      else
-        " Tasks (#{tasks.length}/#{@board.all_tasks.length}) "
-      end
+      base = active_owner ? "#{active_owner} (#{tasks.length})" : "Tasks (#{tasks.length}/#{@board.all_tasks.length})"
+      base += " · #{@board.status_filter.size} status" if @board.status_filter.size.positive?
+      title = " #{base} "
 
       if tasks.empty?
         frame.render_widget(
@@ -687,6 +690,40 @@ module Nox
       )
     end
 
+    def render_status_filter(frame)
+      options = status_filter_options
+      counts  = @board.status_counts
+      items = options.map do |name|
+        check  = @status_filter_selected.include?(name) ? "☑ " : "☐ "
+        sym, _ = status_glyph(name)
+        "#{check}#{sym.ljust(3)}  #{name.ljust(14)} #{counts[name] || 0}"
+      end
+
+      active = @status_filter_selected.length
+      title  = active.zero? ?
+        " Filter Status  Space pick · Enter apply " :
+        " Filter Status (#{active})  ⌫ clear · Enter apply "
+
+      menu_h = [options.length + 4, 16].min
+      @status_filter_area = popup_area(frame.area, width: 44, height: menu_h)
+      frame.render_widget(@tui.clear, @status_filter_area)
+      frame.render_widget(
+        @tui.list(
+          items: items.empty? ? ["(no statuses in view)"] : items,
+          selected_index: @status_filter_idx,
+          highlight_style: @s_selected,
+          highlight_symbol: "▸ ",
+          highlight_spacing: :always,
+          block: @tui.block(
+            title:,
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @status_filter_area
+      )
+    end
+
     # ── Event Handling ──────────────────────────────────────────────────────────
 
     def handle_event(event)
@@ -696,6 +733,7 @@ module Nox
       when :sprint_menu then handle_sprint_menu_event(event)
       when :assign_menu then handle_assign_menu_event(event)
       when :status_menu then handle_status_menu_event(event)
+      when :status_filter then handle_status_filter_event(event)
       when :help        then handle_help_event(event)
       end
     end
@@ -781,7 +819,9 @@ module Nox
       in { type: :key, code: "o" }
         open_in_browser if @active_pane == :tasks
 
-      # ── Search entry ──────────────────────────────────────────────────────────
+      # ── Filters ───────────────────────────────────────────────────────────────
+      in { type: :key, code: "f" }
+        open_status_filter
       in { type: :key, code: "/" }
         @search_mode = true
         @active_pane = :tasks
@@ -963,6 +1003,38 @@ module Nox
       end
     end
 
+    def handle_status_filter_event(event)
+      options = status_filter_options
+      max_idx = [options.length - 1, 0].max
+
+      case event
+      in { type: :key, code: "j" | "down" }
+        @status_filter_idx = [@status_filter_idx + 1, max_idx].min
+      in { type: :key, code: "k" | "up" }
+        @status_filter_idx = [@status_filter_idx - 1, 0].max
+      in { type: :key, code: " " }
+        toggle_status_filter(options[@status_filter_idx])
+      in { type: :key, code: "backspace" }
+        @status_filter_selected = []
+      in { type: :key, code: "enter" }
+        confirm_status_filter
+      in { type: :key, code: "esc" }
+        @mode = :board
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        if @status_filter_area&.contains?(x, y)
+          item_y = y - @status_filter_area.y - 1
+          if item_y >= 0
+            @status_filter_idx = [item_y, max_idx].min
+            toggle_status_filter(options[@status_filter_idx])
+          end
+        else
+          @mode = :board
+        end
+      else
+        nil
+      end
+    end
+
     def handle_help_event(event)
       case event
       in { type: :key, code: "?" } | { type: :key, code: "esc" } | { type: :key, code: "q" }
@@ -1036,6 +1108,37 @@ module Nox
       @assign_selected_ids = current_task.owner_ids.dup
       @previous_mode       = from
       @mode                = :assign_menu
+    end
+
+    def open_status_filter
+      @status_filter_selected = @board.status_filter.to_a
+      @status_filter_idx      = 0
+      @mode                   = :status_filter
+    end
+
+    # Statuses present in the owner-scoped view, ordered by STATUS_OPTIONS then
+    # unknowns. Currently-selected statuses are always included so they stay
+    # uncheckable even if they have no tasks in the current scope.
+    def status_filter_options
+      present = (@board.status_counts.keys + @status_filter_selected).uniq
+      STATUS_OPTIONS.select { |s| present.include?(s) } + (present - STATUS_OPTIONS).sort
+    end
+
+    def toggle_status_filter(name)
+      return unless name
+      if @status_filter_selected.include?(name)
+        @status_filter_selected.delete(name)
+      else
+        @status_filter_selected << name
+      end
+    end
+
+    def confirm_status_filter
+      @board.filter_by_statuses(@status_filter_selected)
+      @list_state.select(0)
+      n = @status_filter_selected.length
+      @status_message = n.zero? ? "Status filter cleared" : "Filtering #{n} status#{'es' unless n == 1}"
+      @mode = :board
     end
 
     def confirm_sprint_selection(filtered)
@@ -1234,6 +1337,8 @@ module Nox
     def empty_task_lines(active_owner)
       headline, hint = if !@board.search_query.empty?
         ["No tasks matching “#{@board.search_query}”", "Esc clear search  ·  Backspace edit"]
+      elsif @board.status_filter.size.positive?
+        ["No tasks match the status filter", "f adjust filter  ·  ⌫ in filter clears"]
       elsif active_owner
         ["#{active_owner} has no tasks in this sprint", "Tab switch pane  ·  s switch sprint"]
       else
