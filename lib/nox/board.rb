@@ -7,7 +7,7 @@ module Nox
     attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query, :status_filter
 
     def initialize(tasks)
-      @all_tasks     = sort_by_updated_desc(tasks.reject(&:sub_task?))
+      ingest(tasks)
       @owner_filter  = nil
       @status_filter = Set.new
       @search_query  = ""
@@ -49,17 +49,19 @@ module Nox
     end
 
     def refresh(tasks)
-      @all_tasks = sort_by_updated_desc(tasks.reject(&:sub_task?))
+      ingest(tasks)
       apply_filters
     end
 
+    # Owners across every task (incl. sub-tasks) so someone whose only work is
+    # sub-tasks still appears and can be selected.
     def all_owners
-      @all_tasks.flat_map(&:owner_names).uniq.sort
+      @every_task.flat_map(&:owner_names).uniq.sort
     end
 
     def tasks_count_by_owner
       counts = Hash.new(0)
-      @all_tasks.each { |t| t.owner_names.each { |name| counts[name] += 1 } }
+      @every_task.each { |t| t.owner_names.each { |name| counts[name] += 1 } }
       counts
     end
 
@@ -67,7 +69,7 @@ module Nox
     # status-filter popup counts and the header chips, so narrowing to one
     # status doesn't zero out the other chips.
     def owner_scoped_tasks
-      @all_tasks.select { |t| match_owner?(t) && match_search?(t) }
+      candidate_pool.select { |t| match_owner?(t) && match_search?(t) }
     end
 
     def status_counts
@@ -78,8 +80,19 @@ module Nox
 
     private
 
+    # Sub-tasks only surface when a specific owner is selected — the "(all)"
+    # view stays root-only so it isn't flooded with child rows.
+    def candidate_pool
+      @owner_filter ? @every_task : @all_tasks
+    end
+
+    def ingest(tasks)
+      @every_task = sort_by_updated_desc(tasks)
+      @all_tasks  = @every_task.reject(&:sub_task?)
+    end
+
     def apply_filters
-      @filtered_tasks = @all_tasks.select do |t|
+      @filtered_tasks = candidate_pool.select do |t|
         match_owner?(t) && match_status?(t) && match_search?(t)
       end
       @current_row = 0

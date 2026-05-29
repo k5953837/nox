@@ -430,6 +430,7 @@ module Nox
           @tui.text_span(content: "#{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
           @tui.text_span(content: "#{pcode.ljust(3)} ", style: @tui.style(fg: pcolor)),
         ]
+        spans << @tui.text_span(content: "└ ", style: @s_dim) if task.sub_task?
         spans << @tui.text_span(content: "#{task.title}  ")
         spans << @tui.text_span(content: sub_indicator, style: @tui.style(fg: :cyan))
         spans << @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim)
