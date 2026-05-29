@@ -15,10 +15,9 @@ module Nox
   ].freeze
 
   PRIORITY_LEVELS = {
-    "P0" => ["P0", :red],
-    "P1" => ["P1", :yellow],
-    "P2" => ["P2", :cyan],
-    "P3" => ["P3", :dark_gray],
+    "P1" => ["P1", :red],
+    "P2" => ["P2", :yellow],
+    "P3" => ["P3", :cyan],
   }.freeze
 
   STATUS_SYMBOLS = {
@@ -426,7 +425,7 @@ module Nox
         assignee       = task.assignee || ""
         sub_indicator  = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length} " : ""
 
-        pcode, pcolor = PRIORITY_LEVELS[task.priority] || ["-", :dark_gray]
+        pcode, pcolor = priority_badge(task.priority) || ["-", :dark_gray]
         spans = [
           @tui.text_span(content: "#{sym.ljust(3)} ", style: @tui.style(fg: sym_color)),
           @tui.text_span(content: "#{pcode.ljust(3)} ", style: @tui.style(fg: pcolor)),
@@ -494,7 +493,7 @@ module Nox
       nav   = total > 1 ? " #{idx + 1}/#{total}" : ""
 
       status_code, status_color = status_glyph(task.status)
-      prio_code, prio_color     = PRIORITY_LEVELS[task.priority] || ["", nil]
+      prio_code, prio_color     = priority_badge(task.priority) || ["", nil]
       sprint_str                = @current_sprint ? "#{@current_sprint[:name]}#{sprint_date_str(@current_sprint)}" : "—"
 
       meta_lines = [
@@ -1460,6 +1459,14 @@ module Nox
       return STATUS_SYMBOLS[status] if STATUS_SYMBOLS.key?(status)
       code = status.to_s.gsub(/[^A-Za-z0-9]/, "")[0, 3]
       [code.empty? ? "?" : code.upcase, :dark_gray]
+    end
+
+    # Resolves a raw Notion priority to [code, color] by matching the P1-P3
+    # prefix — real values look like "P2🟡 - 5wd". Returns nil for High/Medium/
+    # Low and unset, which callers render as a dim "-".
+    def priority_badge(priority)
+      code = priority&.[](/\AP[123]\b/)
+      code && PRIORITY_LEVELS[code]
     end
 
     # ── Content rendering ────────────────────────────────────────────────────────
