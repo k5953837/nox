@@ -431,7 +431,7 @@ module Nox
           @tui.text_span(content: "#{pcode.ljust(2)} ",        style: @tui.style(fg: pcolor)),
           @tui.text_span(content: "#{parent_badge.ljust(3)} ", style: @s_cyan),
         ]
-        spans << @tui.text_span(content: "  └  ", style: @s_cyan) if task.sub_task?
+        spans << @tui.text_span(content: " sub ", style: @s_cyan) if task.sub_task?
         spans << @tui.text_span(content: "#{task.title}  ")
         spans << @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim)
         @tui.text_line(spans: spans)
