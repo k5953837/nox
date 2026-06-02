@@ -422,19 +422,23 @@ module Nox
       items = tasks.map do |task|
         sym, sym_color = status_glyph(task.status)
         pcode, pcolor  = priority_badge(task.priority) || ["-", :dark_gray]
-        parent_badge   = task.has_sub_tasks? ? "▾#{task.sub_item_ids.length}" : ""
-        updated        = format_time(task.updated_at)
-        assignee       = task.assignee || ""
+        tree = if task.has_sub_tasks?
+          "▾#{task.sub_item_ids.length}"
+        elsif task.sub_task?
+          "↳"
+        else
+          ""
+        end
+        updated  = format_time(task.updated_at)
+        assignee = task.assignee || ""
 
-        spans = [
-          @tui.text_span(content: "#{sym.ljust(3)} ",          style: @tui.style(fg: sym_color)),
-          @tui.text_span(content: "#{pcode.ljust(2)} ",        style: @tui.style(fg: pcolor)),
-          @tui.text_span(content: "#{parent_badge.ljust(3)} ", style: @s_cyan),
-        ]
-        spans << @tui.text_span(content: "  ↳  ", style: @s_cyan) if task.sub_task?
-        spans << @tui.text_span(content: "#{task.title}  ")
-        spans << @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim)
-        @tui.text_line(spans: spans)
+        @tui.text_line(spans: [
+          @tui.text_span(content: "#{sym.ljust(3)} ",   style: @tui.style(fg: sym_color)),
+          @tui.text_span(content: "#{pcode.ljust(2)} ", style: @tui.style(fg: pcolor)),
+          @tui.text_span(content: "#{tree.ljust(3)} ",  style: @s_cyan),
+          @tui.text_span(content: "#{task.title}  "),
+          @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
+        ])
       end
 
       frame.render_stateful_widget(
