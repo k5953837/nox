@@ -428,7 +428,7 @@ module Nox
 
         @tui.text_line(spans: [
           @tui.text_span(content: "#{sym.ljust(3)} ",   style: @tui.style(fg: sym_color)),
-          @tui.text_span(content: "#{pcode.ljust(3)} ", style: @tui.style(fg: pcolor)),
+          @tui.text_span(content: "#{pcode.ljust(2)} ", style: @tui.style(fg: pcolor)),
           @tui.text_span(content: "#{tree.ljust(3)} ",  style: @s_cyan),
           @tui.text_span(content: "#{task.title}  "),
           @tui.text_span(content: "#{updated}  #{assignee}", style: @s_dim),
