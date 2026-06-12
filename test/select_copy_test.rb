@@ -287,13 +287,51 @@ class SelectCopyTest < Minitest::Test
       app = build_app(clipboard: ->(_t) {})
       step(app)
 
+      y = find_row("Fix login flow")
+      x = row_text(y).index("Fix login flow")
+
       # 模擬 resize 競態:選取座標超出目前 buffer(draw 先於 resize 事件處理)
       sel = app.instance_variable_get(:@selection)
-      sel.start(5, 5, max_x: 200, max_y: 90)
+      sel.start(0, 0, max_x: 200, max_y: 90)
       sel.update(150, 80)
 
       RatatuiRuby.draw { |f| app.send(:render, f) } # 不應 raise
-      assert RatatuiRuby.get_cell_at(5, 5).reversed?, "in-bounds part of the overlay still renders"
+      assert RatatuiRuby.get_cell_at(x, y).reversed?, "in-bounds part of the overlay still renders"
+    end
+  end
+
+  # ── 生產環境契約:live Crossterm 上 get_cell_at 一律 raise ───────────────
+  # (gem 的 buffer 讀回是 TestBackend 專用;選取功能不得依賴它)
+
+  def test_select_copy_works_without_buffer_readback
+    with_test_terminal(WIDTH, HEIGHT) do
+      copied = []
+      app = build_app(clipboard: ->(t) { copied << t })
+      step(app)
+
+      y = find_row("Fix login flow")
+      x = row_text(y).index("Fix login flow")
+      crossterm_contract = lambda do |*_args|
+        raise RatatuiRuby::Error::Terminal, "Coordinates out of bounds"
+      end
+
+      RatatuiRuby.stub(:get_cell_at, crossterm_contract) do
+        inject_mouse(x: x, y: y, kind: :down)
+        step(app)
+        inject_mouse(x: x + 13, y: y, kind: :drag)
+        step(app)
+        RatatuiRuby.draw { |f| app.send(:render, f) } # overlay 重繪
+      end
+
+      assert RatatuiRuby.get_cell_at(x, y).reversed?,
+             "overlay must render without buffer read-back"
+
+      RatatuiRuby.stub(:get_cell_at, crossterm_contract) do
+        inject_mouse(x: x + 13, y: y, kind: :up)
+        step(app)
+      end
+
+      assert_equal ["Fix login flow"], copied
     end
   end
 

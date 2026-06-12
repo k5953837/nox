@@ -8,6 +8,7 @@ require "date"
 
 require_relative "nox/version"
 require_relative "nox/selection"
+require_relative "nox/shadow_grid"
 require_relative "nox/client"
 require_relative "nox/task"
 require_relative "nox/board"

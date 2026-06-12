@@ -169,35 +169,33 @@ module Nox
 
     def render(frame)
       @terminal_width = frame.area.width
+      # Text mirror of this frame — the buffer cannot be read back on a live
+      # terminal (get_cell_at is TestBackend-only), so the selection feature
+      # works entirely off this grid.
+      @shadow = ShadowGrid.new(frame.area.width, frame.area.height)
+      mframe  = MappingFrame.new(frame, @shadow)
       case @mode
-      when :loading     then render_loading(frame)
-      when :board       then render_board(frame)
-      when :detail      then render_detail(frame)
-      when :sprint_menu then render_sprint_menu(frame)
-      when :assign_menu then render_assign_menu(frame)
-      when :status_menu then render_status_menu(frame)
-      when :status_filter then render_status_filter(frame)
-      when :help        then render_help(frame)
+      when :loading     then render_loading(mframe)
+      when :board       then render_board(mframe)
+      when :detail      then render_detail(mframe)
+      when :sprint_menu then render_sprint_menu(mframe)
+      when :assign_menu then render_assign_menu(mframe)
+      when :status_menu then render_status_menu(mframe)
+      when :status_filter then render_status_filter(mframe)
+      when :help        then render_help(mframe)
       end
       render_selection_overlay(frame) if @selection.active?
     end
 
-    # Re-draws the selected rectangle with reversed style. Cell contents come
-    # from the previous completed frame (get_cell_at semantics inside a draw
-    # block), which is identical to the current one while dragging.
-    # Clamped to the live frame area: a resize can shrink the buffer before
-    # the resize event (which clears the selection) is processed, and an
-    # out-of-bounds get_cell_at raises inside the draw block.
+    # Re-styles the selected rectangle from this frame's shadow grid. Only
+    # written text becomes reversed segments — borders and empty gaps are
+    # left untouched, and out-of-range coords are clamped by the grid.
     def render_selection_overlay(frame)
       x1, y1, x2, y2 = @selection.rect
-      max_x = frame.area.width - 1
-      max_y = frame.area.height - 1
-      return if x1 > max_x || y1 > max_y
-
-      x2 = [x2, max_x].min
-      y2 = [y2, max_y].min
-      rows = (y1..y2).map { |y| [x1, y, row_slice_text(x1, x2, y)] }
-      frame.render_widget(SelectionOverlay.new(rows), frame.area)
+      rows = (y1..y2).flat_map do |y|
+        @shadow.segments(x1, x2, y).map { |x, text| [x, y, text] }
+      end
+      frame.render_widget(SelectionOverlay.new(rows), frame.area) unless rows.empty?
     end
 
     def render_loading(frame)
@@ -1236,29 +1234,9 @@ module Nox
 
     def selection_text
       x1, y1, x2, y2 = @selection.rect
-      area = RatatuiRuby.terminal_area
-      x2 = [x2, area.width - 1].min
-      y2 = [y2, area.height - 1].min
-      return "" if x1 > x2 || y1 > y2
+      return "" unless @shadow
 
-      (y1..y2).map { |y| row_slice_text(x1, x2, y).rstrip }.join("\n")
-    end
-
-    # Reads cells x1..x2 of row y as a string. A wide char (CJK, emoji)
-    # occupies two cells but only lives in the first; the buffer pads the
-    # second with a space, so the cursor must jump past the continuation cell
-    # to reconstruct the text. Width comes from the gem's text_width (the same
-    # unicode-width data ratatui itself renders with).
-    def row_slice_text(x1, x2, y)
-      text = +""
-      x = x1
-      while x <= x2
-        sym = @tui.get_cell_at(x, y).symbol
-        text << sym
-        # text_width is 0 for zero-width combining chars — never step by 0
-        x += sym.ascii_only? ? 1 : [@tui.text_width(sym), 1].max
-      end
-      text
+      (y1..y2).map { |y| @shadow.slice(x1, x2, y).rstrip }.join("\n")
     end
 
     def handle_mouse_click(x, y)

@@ -40,15 +40,22 @@
 | `Mouse(up, left)` | 選取作用中且非 single cell → 逐格 `get_cell_at` 取文字 → pbcopy → 清除選取、顯示 `✓ copied N chars`；否則僅清除 |
 | 其他任何事件（鍵盤/scroll/paste/focus，None 除外） | 清除作用中的選取（overlay 讀上一幀，畫面變動會highlight 鬼影）；copy notice 為一次性——顯示至下一次事件觸發重繪 |
 
+### 資料來源：ShadowGrid（Round 2 修正）
+
+> ⚠️ 原設計以 `get_cell_at` 讀回 buffer——實機驗證後發現 **gem 的 buffer 讀回是 TestBackend 專用**（live Crossterm 的 `DrawSnapshot.buffer = None`、`LiveTerminal::cell_at → None`，任何座標一律 raise `Error::Terminal "out of bounds"`），測試全綠但實機 crash。
+
+改為 **render-time 文字鏡像**：`Nox::ShadowGrid`（純 Ruby cell 格網）+ `Nox::MappingFrame`（包裝 frame，攔截 `render_widget`/`render_stateful_widget`，以 widget 內省把 Paragraph/List/Clear 的文字側登記進格網；border、scrollbar 等裝飾忽略）。
+
 ### 反白渲染
 
-每次 `tui.draw { render(frame) }` 完成後，若選取作用中：對矩形內每格 `get_cell_at` 讀回字元，以反轉樣式（reversed）`draw_cell` 疊回。Round 1 先以 headless spike 驗證 draw 後 overlay 的時序可行性。
+每幀 render 結束後，若選取作用中：以 `@shadow.segments(x1, x2, y)` 取出矩形內**有文字的連續區段**，以反轉樣式 `Draw.string` 疊回。只反白會被複製的文字（邊框與空白不反白）；資料是本幀的，無上一幀鬼影問題。
 
 ### 文字擷取規則
 
-- 逐行讀取矩形內 cell，每行右側 trim 空白，行間以 `\n` 連接。
-- 拖曳超出 buffer 範圍時 clamp。
+- `@shadow.slice` 逐行讀取矩形（未觸碰 cell 視為空白、寬字元 continuation 跳過），每行右側 trim，行間以 `\n` 連接。
+- 出界座標由格網內部 clamp，結構上不可能 crash。
 - 單擊不拖（1×1 矩形）視為取消，不覆寫剪貼簿。
+- 已知限制：stateless List（popup 選單用 `selected_index:`）捲動時 offset 無法讀回，以 0 近似；超出 popup 高度的選單極少見。
 
 ### 複製管道
 
