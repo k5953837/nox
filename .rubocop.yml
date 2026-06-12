@@ -1,0 +1,17 @@
+AllCops:
+  TargetRubyVersion: 3.4
+  NewCops: disable
+  SuggestExtensions: false
+
+# 座標參數 x / y 是 TUI 的領域語彙
+Naming/MethodParameterName:
+  AllowedNames: [x, y, id]
+
+Style/Documentation:
+  Enabled: false
+
+Metrics:
+  Enabled: false
+
+Layout/LineLength:
+  Max: 120

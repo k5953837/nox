@@ -13,6 +13,6 @@ gem "dotenv", "~> 2.8"
 
 group :development do
   gem "rake", "~> 13.0"
-  gem "rubocop", "~> 1.50"
+  gem "rubocop", "~> 1.75"
   gem "minitest", "~> 5.25"
 end
