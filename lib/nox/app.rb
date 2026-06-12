@@ -1219,7 +1219,9 @@ module Nox
         # Any other real event (keyboard, scroll, paste, focus) invalidates an
         # active selection: the screen may change underneath the overlay, which
         # reads previous-frame cells and would highlight stale ghost content.
+        # The anchor goes too — cancelling cancels the whole gesture.
         @selection.clear
+        @pending_anchor = nil
         nil
       end
     end
@@ -1253,6 +1255,7 @@ module Nox
       while x <= x2
         sym = @tui.get_cell_at(x, y).symbol
         text << sym
+        # text_width is 0 for zero-width combining chars — never step by 0
         x += sym.ascii_only? ? 1 : [@tui.text_width(sym), 1].max
       end
       text

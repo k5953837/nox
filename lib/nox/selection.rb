@@ -15,7 +15,7 @@ module Nox
       @max_x = max_x
       @max_y = max_y
       @anchor = [clamp(x, max_x), clamp(y, max_y)]
-      @cursor = @anchor
+      @cursor = @anchor.dup
     end
 
     def update(x, y)
