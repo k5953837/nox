@@ -185,8 +185,17 @@ module Nox
     # Re-draws the selected rectangle with reversed style. Cell contents come
     # from the previous completed frame (get_cell_at semantics inside a draw
     # block), which is identical to the current one while dragging.
+    # Clamped to the live frame area: a resize can shrink the buffer before
+    # the resize event (which clears the selection) is processed, and an
+    # out-of-bounds get_cell_at raises inside the draw block.
     def render_selection_overlay(frame)
       x1, y1, x2, y2 = @selection.rect
+      max_x = frame.area.width - 1
+      max_y = frame.area.height - 1
+      return if x1 > max_x || y1 > max_y
+
+      x2 = [x2, max_x].min
+      y2 = [y2, max_y].min
       rows = (y1..y2).map { |y| [x1, y, row_slice_text(x1, x2, y)] }
       frame.render_widget(SelectionOverlay.new(rows), frame.area)
     end
@@ -338,19 +347,23 @@ module Nox
         ["BOARD",   "j/k move · Enter open · / search · f filter · S status · a assign · o browser · s sprint · ? help · q quit"]
       end
 
-      footer_spans = if @status_message
+      render_footer(frame, footer_area, [
+        @tui.text_span(content: " #{mode_label} ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+        @tui.text_span(content: "  #{hints}", style: @s_dim),
+      ])
+    end
+
+    # Footer line that swaps in the one-shot @status_message when present.
+    # The message is consumed here: it stays visible until the next event
+    # triggers a redraw, then reverts to the default spans.
+    def render_footer(frame, area, default_spans)
+      spans = if @status_message
         [@tui.text_span(content: @status_message, style: @s_yellow)]
       else
-        [
-          @tui.text_span(content: " #{mode_label} ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
-          @tui.text_span(content: "  #{hints}", style: @s_dim),
-        ]
+        default_spans
       end
       @status_message = nil
-      frame.render_widget(
-        @tui.paragraph(text: @tui.text_line(spans: footer_spans)),
-        footer_area
-      )
+      frame.render_widget(@tui.paragraph(text: @tui.text_line(spans: spans)), area)
     end
 
     def render_search_bar(frame, area)
@@ -580,20 +593,11 @@ module Nox
 
       total    = @content_lines.length
       position = total.zero? ? "" : " #{@detail_scroll + 1}-#{[@detail_scroll + @detail_height, total].min}/#{total}  "
-      footer_spans = if @status_message
-        [@tui.text_span(content: @status_message, style: @s_yellow)]
-      else
-        [
-          @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
-          @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
-          @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
-        ]
-      end
-      @status_message = nil
-      frame.render_widget(
-        @tui.paragraph(text: @tui.text_line(spans: footer_spans)),
-        footer_area
-      )
+      render_footer(frame, footer_area, [
+        @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+        @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
+        @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
+      ])
     end
 
     def render_sprint_menu(frame)
@@ -1193,18 +1197,29 @@ module Nox
           ax, ay = @pending_anchor || [x, y]
           area = RatatuiRuby.terminal_area
           @selection.start(ax, ay, max_x: area.width - 1, max_y: area.height - 1)
+          @last_click_time = 0.0 # a drag is not a click — disarm double-click
         end
         @selection.update(x, y)
         :handled
-      in { type: :mouse, kind: "up", button: "left" } if @selection.active?
-        copy_selection unless @selection.single_cell?
-        @selection.clear
+      in { type: :mouse, kind: "up", button: "left" }
+        was_active = @selection.active?
+        if was_active
+          copy_selection unless @selection.single_cell?
+          @selection.clear
+        end
         @pending_anchor = nil
-        :handled
+        was_active ? :handled : nil
       in { type: :resize }
         @selection.clear
+        @pending_anchor = nil
+        nil
+      in { type: :none }
         nil
       else
+        # Any other real event (keyboard, scroll, paste, focus) invalidates an
+        # active selection: the screen may change underneath the overlay, which
+        # reads previous-frame cells and would highlight stale ghost content.
+        @selection.clear
         nil
       end
     end
@@ -1219,34 +1234,28 @@ module Nox
 
     def selection_text
       x1, y1, x2, y2 = @selection.rect
+      area = RatatuiRuby.terminal_area
+      x2 = [x2, area.width - 1].min
+      y2 = [y2, area.height - 1].min
+      return "" if x1 > x2 || y1 > y2
+
       (y1..y2).map { |y| row_slice_text(x1, x2, y).rstrip }.join("\n")
     end
 
-    # East Asian Wide / Fullwidth + emoji — chars that occupy two cells.
-    # NOTE: /x mode treats whitespace inside [...] literally, so each class
-    # must stay free of spaces; classes are joined with alternation instead.
-    WIDE_CHAR = /
-      [\u{1100}-\u{115F}\u{2E80}-\u{303E}\u{3041}-\u{33FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}]
-      |[\u{A000}-\u{A4CF}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE30}-\u{FE4F}]
-      |[\u{FF00}-\u{FF60}\u{FFE0}-\u{FFE6}\u{1F300}-\u{1FAFF}\u{20000}-\u{2FFFD}]
-    /x
-
-    # Reads cells x1..x2 of row y as a string. A wide char occupies two cells
-    # but only lives in the first; the buffer pads the second with a space,
-    # so that continuation cell must be skipped to reconstruct the text.
+    # Reads cells x1..x2 of row y as a string. A wide char (CJK, emoji)
+    # occupies two cells but only lives in the first; the buffer pads the
+    # second with a space, so the cursor must jump past the continuation cell
+    # to reconstruct the text. Width comes from the gem's text_width (the same
+    # unicode-width data ratatui itself renders with).
     def row_slice_text(x1, x2, y)
-      chars = []
-      skip = false
-      (x1..x2).each do |x|
-        if skip
-          skip = false
-          next
-        end
+      text = +""
+      x = x1
+      while x <= x2
         sym = @tui.get_cell_at(x, y).symbol
-        chars << sym
-        skip = sym.match?(WIDE_CHAR)
+        text << sym
+        x += sym.ascii_only? ? 1 : [@tui.text_width(sym), 1].max
       end
-      chars.join
+      text
     end
 
     def handle_mouse_click(x, y)

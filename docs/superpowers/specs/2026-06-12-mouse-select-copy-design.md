@@ -38,7 +38,7 @@
 | `Mouse(down, left)` | 記 pending anchor，**照常**傳給 mode handler（click-to-select 不變） |
 | `Mouse(drag, left)` | 啟動／更新選取（clamp 到畫面邊界），觸發重繪 |
 | `Mouse(up, left)` | 選取作用中且非 single cell → 逐格 `get_cell_at` 取文字 → pbcopy → 清除選取、顯示 `✓ copied N chars`；否則僅清除 |
-| 任意鍵盤事件 | 清除 copy notice |
+| 其他任何事件（鍵盤/scroll/paste/focus，None 除外） | 清除作用中的選取（overlay 讀上一幀，畫面變動會highlight 鬼影）；copy notice 為一次性——顯示至下一次事件觸發重繪 |
 
 ### 反白渲染
 

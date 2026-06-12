@@ -14,8 +14,8 @@ module Nox
     def start(x, y, max_x: nil, max_y: nil)
       @max_x = max_x
       @max_y = max_y
-      @anchor = [x, y]
-      @cursor = [x, y]
+      @anchor = [clamp(x, max_x), clamp(y, max_y)]
+      @cursor = @anchor
     end
 
     def update(x, y)
@@ -58,7 +58,7 @@ module Nox
   # rows: [[x, y, string], ...] — strings read back from the previous frame's
   # buffer, so the overlay never changes what's underneath, only its style.
   class SelectionOverlay
-    REVERSED = { modifiers: [:reversed] }.freeze
+    REVERSED = { modifiers: [:reversed].freeze }.freeze
 
     def initialize(rows)
       @rows = rows

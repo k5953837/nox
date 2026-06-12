@@ -213,6 +213,90 @@ class SelectCopyTest < Minitest::Test
     end
   end
 
+  def test_click_after_drag_copy_is_not_double_click
+    with_test_terminal(WIDTH, HEIGHT) do
+      app = build_app(clipboard: ->(_t) {})
+      detail_opened = false
+      fake_client = Object.new
+      fake_client.define_singleton_method(:fetch_page_content) do |_id|
+        detail_opened = true
+        []
+      end
+      fake_client.define_singleton_method(:fetch_sub_tasks) { |_id| [] }
+      app.instance_variable_set(:@client, fake_client)
+      step(app)
+
+      y = find_row("Deploy beta")
+      x = row_text(y).index("Deploy beta")
+      drag_select(app, x, y, x + 5, y) # 拖曳複製(起手 down 落在同一格)
+      inject_mouse(x: x, y: y, kind: :down) # 緊接著的單擊
+      step(app)
+      inject_mouse(x: x, y: y, kind: :up)
+      step(app)
+
+      refute detail_opened, "single click right after a drag-copy must not count as double-click"
+    end
+  end
+
+  def test_scroll_clears_active_selection
+    with_test_terminal(WIDTH, HEIGHT) do
+      app = build_app(clipboard: ->(_t) {})
+      step(app)
+
+      y = find_row("Fix login flow")
+      x = row_text(y).index("Fix login flow")
+      inject_mouse(x: x, y: y, kind: :down)
+      step(app)
+      inject_mouse(x: x + 4, y: y, kind: :drag)
+      step(app)
+      inject_mouse(x: x, y: y, kind: :scroll_down)
+      step(app)
+      RatatuiRuby.draw { |f| app.send(:render, f) }
+
+      (x..x + 4).each do |cx|
+        refute RatatuiRuby.get_cell_at(cx, y).reversed?,
+               "scroll must clear the selection overlay (cell #{cx},#{y})"
+      end
+    end
+  end
+
+  def test_key_event_clears_active_selection
+    with_test_terminal(WIDTH, HEIGHT) do
+      app = build_app(clipboard: ->(_t) {})
+      step(app)
+
+      y = find_row("Fix login flow")
+      x = row_text(y).index("Fix login flow")
+      inject_mouse(x: x, y: y, kind: :down)
+      step(app)
+      inject_mouse(x: x + 4, y: y, kind: :drag)
+      step(app)
+      inject_key("j")
+      step(app)
+      RatatuiRuby.draw { |f| app.send(:render, f) }
+
+      (x..x + 4).each do |cx|
+        refute RatatuiRuby.get_cell_at(cx, y).reversed?,
+               "keyboard input must clear the selection overlay (cell #{cx},#{y})"
+      end
+    end
+  end
+
+  def test_overlay_with_out_of_bounds_rect_does_not_crash
+    with_test_terminal(WIDTH, HEIGHT) do
+      app = build_app(clipboard: ->(_t) {})
+      step(app)
+
+      # 模擬 resize 競態:選取座標超出目前 buffer(draw 先於 resize 事件處理)
+      sel = app.instance_variable_get(:@selection)
+      sel.start(5, 5, max_x: 200, max_y: 90)
+      sel.update(150, 80)
+
+      RatatuiRuby.draw { |f| app.send(:render, f) } # 不應 raise
+      assert RatatuiRuby.get_cell_at(5, 5).reversed?, "in-bounds part of the overlay still renders"
+    end
+  end
+
   # ── 反白渲染 ─────────────────────────────────────────────────────────────
 
   def test_drag_shows_reversed_overlay

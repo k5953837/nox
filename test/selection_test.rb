@@ -62,6 +62,11 @@ class SelectionTest < Minitest::Test
     assert_equal [5, 3, 79, 23], @sel.rect
   end
 
+  def test_start_clamps_anchor_to_bounds
+    @sel.start(100, 50, max_x: 79, max_y: 23)
+    assert_equal [79, 23, 79, 23], @sel.rect
+  end
+
   def test_update_clamps_negative_coords_to_zero
     @sel.start(5, 3, max_x: 79, max_y: 23)
     @sel.update(-4, -2)
