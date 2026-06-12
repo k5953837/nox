@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require_relative 'test_helper'
-require 'nox/selection'
+require_relative "test_helper"
+require "nox/selection"
 
 class SelectionTest < Minitest::Test
   def setup

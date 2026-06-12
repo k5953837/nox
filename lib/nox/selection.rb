@@ -53,4 +53,19 @@ module Nox
       max ? [value, max].min : value
     end
   end
+
+  # Custom widget that re-draws the selected cells with reversed style.
+  # rows: [[x, y, string], ...] — strings read back from the previous frame's
+  # buffer, so the overlay never changes what's underneath, only its style.
+  class SelectionOverlay
+    REVERSED = { modifiers: [:reversed] }.freeze
+
+    def initialize(rows)
+      @rows = rows
+    end
+
+    def render(_area)
+      @rows.map { |x, y, str| RatatuiRuby::Draw.string(x, y, str, REVERSED) }
+    end
+  end
 end

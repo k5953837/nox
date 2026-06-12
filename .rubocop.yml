@@ -1,11 +1,31 @@
+inherit_from: .rubocop_todo.yml
+
 AllCops:
   TargetRubyVersion: 3.4
   NewCops: disable
   SuggestExtensions: false
 
-# 座標參數 x / y 是 TUI 的領域語彙
+# 座標參數 x / y(與矩形角點 x1/y1/x2/y2)是 TUI 的領域語彙
 Naming/MethodParameterName:
-  AllowedNames: [x, y, id]
+  AllowedNames: [x, y, x1, y1, x2, y2, id]
+
+# 專案既有慣例為雙引號(app.rb 等全篇)
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+# 專案慣例:`x = if ...` 的 end 對齊賦值行首
+Layout/EndAlignment:
+  EnforcedStyleAlignWith: start_of_line
+
+# 專案慣例:多行 literal 使用 trailing comma
+Style/TrailingCommaInArrayLiteral:
+  EnforcedStyleForMultiline: consistent_comma
+Style/TrailingCommaInHashLiteral:
+  EnforcedStyleForMultiline: consistent_comma
+
+# 專案慣例:賦值對齊(table-style)
+Layout/ExtraSpacing:
+  AllowForAlignment: true
 
 Style/Documentation:
   Enabled: false

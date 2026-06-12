@@ -60,7 +60,10 @@ module Nox
   ].freeze
 
   class App
-    def initialize
+    def initialize(clipboard: nil)
+      @clipboard           = clipboard || ->(text) { IO.popen("pbcopy", "w") { |io| io.write(text) } }
+      @selection           = Selection.new
+      @pending_anchor      = nil
       @client              = Client.new
       @mode                = :loading
       @loading_message     = ""
@@ -176,6 +179,16 @@ module Nox
       when :status_filter then render_status_filter(frame)
       when :help        then render_help(frame)
       end
+      render_selection_overlay(frame) if @selection.active?
+    end
+
+    # Re-draws the selected rectangle with reversed style. Cell contents come
+    # from the previous completed frame (get_cell_at semantics inside a draw
+    # block), which is identical to the current one while dragging.
+    def render_selection_overlay(frame)
+      x1, y1, x2, y2 = @selection.rect
+      rows = (y1..y2).map { |y| [x1, y, row_slice_text(x1, x2, y)] }
+      frame.render_widget(SelectionOverlay.new(rows), frame.area)
     end
 
     def render_loading(frame)
@@ -567,14 +580,18 @@ module Nox
 
       total    = @content_lines.length
       position = total.zero? ? "" : " #{@detail_scroll + 1}-#{[@detail_scroll + @detail_height, total].min}/#{total}  "
+      footer_spans = if @status_message
+        [@tui.text_span(content: @status_message, style: @s_yellow)]
+      else
+        [
+          @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+          @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
+          @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
+        ]
+      end
+      @status_message = nil
       frame.render_widget(
-        @tui.paragraph(
-          text: @tui.text_line(spans: [
-            @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
-            @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
-            @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
-          ])
-        ),
+        @tui.paragraph(text: @tui.text_line(spans: footer_spans)),
         footer_area
       )
     end
@@ -730,6 +747,8 @@ module Nox
     # ── Event Handling ──────────────────────────────────────────────────────────
 
     def handle_event(event)
+      return nil if handle_selection_event(event) == :handled
+
       case @mode
       when :board       then handle_board_event(event)
       when :detail      then handle_detail_event(event)
@@ -1158,6 +1177,76 @@ module Nox
         @status_message = err ? "Failed to load sprint: #{err.message.slice(0, 35)}" : "Switched to: #{selected[:name]}"
       end
       @mode = :board
+    end
+
+    # Global interceptor for mouse selection, ahead of per-mode dispatch.
+    # "down" only records a potential anchor and passes through, so
+    # click-to-select keeps working; the selection starts on the first drag.
+    def handle_selection_event(event)
+      case event
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        @selection.clear
+        @pending_anchor = [x, y]
+        nil
+      in { type: :mouse, kind: "drag", button: "left", x:, y: }
+        unless @selection.active?
+          ax, ay = @pending_anchor || [x, y]
+          area = RatatuiRuby.terminal_area
+          @selection.start(ax, ay, max_x: area.width - 1, max_y: area.height - 1)
+        end
+        @selection.update(x, y)
+        :handled
+      in { type: :mouse, kind: "up", button: "left" } if @selection.active?
+        copy_selection unless @selection.single_cell?
+        @selection.clear
+        @pending_anchor = nil
+        :handled
+      in { type: :resize }
+        @selection.clear
+        nil
+      else
+        nil
+      end
+    end
+
+    def copy_selection
+      text = selection_text
+      @clipboard.call(text)
+      @status_message = "✓ copied #{text.length} chars"
+    rescue StandardError => e
+      @status_message = "✗ copy failed: #{e.message.slice(0, 40)}"
+    end
+
+    def selection_text
+      x1, y1, x2, y2 = @selection.rect
+      (y1..y2).map { |y| row_slice_text(x1, x2, y).rstrip }.join("\n")
+    end
+
+    # East Asian Wide / Fullwidth + emoji — chars that occupy two cells.
+    # NOTE: /x mode treats whitespace inside [...] literally, so each class
+    # must stay free of spaces; classes are joined with alternation instead.
+    WIDE_CHAR = /
+      [\u{1100}-\u{115F}\u{2E80}-\u{303E}\u{3041}-\u{33FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}]
+      |[\u{A000}-\u{A4CF}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE30}-\u{FE4F}]
+      |[\u{FF00}-\u{FF60}\u{FFE0}-\u{FFE6}\u{1F300}-\u{1FAFF}\u{20000}-\u{2FFFD}]
+    /x
+
+    # Reads cells x1..x2 of row y as a string. A wide char occupies two cells
+    # but only lives in the first; the buffer pads the second with a space,
+    # so that continuation cell must be skipped to reconstruct the text.
+    def row_slice_text(x1, x2, y)
+      chars = []
+      skip = false
+      (x1..x2).each do |x|
+        if skip
+          skip = false
+          next
+        end
+        sym = @tui.get_cell_at(x, y).symbol
+        chars << sym
+        skip = sym.match?(WIDE_CHAR)
+      end
+      chars.join
     end
 
     def handle_mouse_click(x, y)
