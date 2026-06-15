@@ -55,8 +55,8 @@ module Nox
   end
 
   # Custom widget that re-draws the selected cells with reversed style.
-  # rows: [[x, y, string], ...] — strings read back from the previous frame's
-  # buffer, so the overlay never changes what's underneath, only its style.
+  # rows: [[x, y, string], ...] — strings mirrored from the current frame's
+  # ShadowGrid, so the overlay never changes what's underneath, only its style.
   class SelectionOverlay
     REVERSED = { modifiers: [:reversed].freeze }.freeze
 

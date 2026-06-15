@@ -60,6 +60,18 @@ class ShadowGridTest < Minitest::Test
     assert_empty @grid.segments(0, 19, 3)
   end
 
+  def test_segments_starting_on_continuation_cell_anchors_at_next_real_char
+    @grid.write(5, 0, "修ab") # 修 占 col 5-6,a 在 7,b 在 8
+    # 選取左緣落在「修」的後半格(col 6) → 區段應從 col 7 的真實字元開始,
+    # 否則 overlay 會把 "ab" 畫到 col 6,整段左移一格。
+    assert_equal [[7, "ab"]], @grid.segments(6, 8, 0)
+  end
+
+  def test_segments_keeps_wide_char_run_start_when_fully_inside
+    @grid.write(5, 0, "修ab")
+    assert_equal [[5, "修ab"]], @grid.segments(5, 8, 0)
+  end
+
   # ── clear_region ─────────────────────────────────────────────────────────
 
   def test_clear_region_resets_cells_to_untouched

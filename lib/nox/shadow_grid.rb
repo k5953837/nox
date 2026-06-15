@@ -66,15 +66,21 @@ module Nox
       run_start = nil
       run = nil
       (x1..x2).each do |x|
-        if row[x].nil?
+        cell = row[x]
+        if cell.nil?
           result << [run_start, run] if run_start
           run_start = nil
+        elsif cell.empty? && run_start.nil?
+          # Left half of this wide char is outside the slice; its continuation
+          # half carries no text, so don't anchor a run on it — start at the
+          # next real char so the overlay aligns to the correct column.
+          next
         else
           unless run_start
             run_start = x
             run = +""
           end
-          run << row[x]
+          run << cell
         end
       end
       result << [run_start, run] if run_start

@@ -1221,8 +1221,9 @@ module Nox
         nil
       else
         # Any other real event (keyboard, scroll, paste, focus) invalidates an
-        # active selection: the screen may change underneath the overlay, which
-        # reads previous-frame cells and would highlight stale ghost content.
+        # active selection: it can change the screen content under the fixed
+        # selection rect, so the overlay would reverse-highlight whatever text
+        # now sits there rather than what the user grabbed. Drop the gesture.
         # The anchor goes too — cancelling cancels the whole gesture.
         @selection.clear
         @pending_anchor = nil
