@@ -169,20 +169,26 @@ module Nox
 
     def render(frame)
       @terminal_width = frame.area.width
-      # Text mirror of this frame — the buffer cannot be read back on a live
-      # terminal (get_cell_at is TestBackend-only), so the selection feature
-      # works entirely off this grid.
-      @shadow = ShadowGrid.new(frame.area.width, frame.area.height)
-      mframe  = MappingFrame.new(frame, @shadow)
+      # Mirror this frame's text into a ShadowGrid only while a selection is
+      # live — the live terminal buffer can't be read back (get_cell_at is
+      # TestBackend-only), so the overlay and copy work off this grid. Idle
+      # frames skip the per-cell mirroring entirely.
+      if @selection.active?
+        @shadow = ShadowGrid.new(frame.area.width, frame.area.height)
+        target  = MappingFrame.new(frame, @shadow)
+      else
+        @shadow = nil
+        target  = frame
+      end
       case @mode
-      when :loading     then render_loading(mframe)
-      when :board       then render_board(mframe)
-      when :detail      then render_detail(mframe)
-      when :sprint_menu then render_sprint_menu(mframe)
-      when :assign_menu then render_assign_menu(mframe)
-      when :status_menu then render_status_menu(mframe)
-      when :status_filter then render_status_filter(mframe)
-      when :help        then render_help(mframe)
+      when :loading     then render_loading(target)
+      when :board       then render_board(target)
+      when :detail      then render_detail(target)
+      when :sprint_menu then render_sprint_menu(target)
+      when :assign_menu then render_assign_menu(target)
+      when :status_menu then render_status_menu(target)
+      when :status_filter then render_status_filter(target)
+      when :help        then render_help(target)
       end
       render_selection_overlay(frame) if @selection.active?
     end

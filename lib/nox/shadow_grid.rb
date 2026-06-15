@@ -136,15 +136,13 @@ module Nox
       RatatuiRuby._text_width(widget.highlight_symbol)
     end
 
-    # [x, y, width, height] inside the block's borders.
+    # [x, y, width, height] inside the block's borders and padding.
+    # Defers to the gem's Block#inner so border/padding math stays in one place.
     def inner_rect(area, block)
-      borders = Array(block&.borders)
-      all = borders.include?(:all)
-      left   = all || borders.include?(:left)   ? 1 : 0
-      right  = all || borders.include?(:right)  ? 1 : 0
-      top    = all || borders.include?(:top)    ? 1 : 0
-      bottom = all || borders.include?(:bottom) ? 1 : 0
-      [area.x + left, area.y + top, area.width - left - right, area.height - top - bottom]
+      return [area.x, area.y, area.width, area.height] unless block
+
+      r = block.inner(area)
+      [r.x, r.y, r.width, r.height]
     end
 
     # A bordered block renders its title on the top border row at x+1.
