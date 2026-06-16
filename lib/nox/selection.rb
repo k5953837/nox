@@ -49,23 +49,8 @@ module Nox
     private
 
     def clamp(value, max)
-      value = value.negative? ? 0 : value
-      max ? [value, max].min : value
-    end
-  end
-
-  # Custom widget that re-draws the selected cells with reversed style.
-  # rows: [[x, y, string], ...] — strings mirrored from the current frame's
-  # ShadowGrid, so the overlay never changes what's underneath, only its style.
-  class SelectionOverlay
-    REVERSED = { modifiers: [:reversed].freeze }.freeze
-
-    def initialize(rows)
-      @rows = rows
-    end
-
-    def render(_area)
-      @rows.map { |x, y, str| RatatuiRuby::Draw.string(x, y, str, REVERSED) }
+      # max nil → no upper bound; Integer#clamp treats a nil bound as open.
+      value.clamp(0, max)
     end
   end
 end
