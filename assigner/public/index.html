@@ -3,62 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>派工轉盤 · Task Roulette</title>
+  <title>派工轉盤 · The Honest Wheel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <h1>派工轉盤 <span class="sub">Task Roulette</span></h1>
-    <div class="header-right">
-      <span class="badge dry">DRY-RUN · Stage 1</span>
-      <button id="refresh" title="重新從 Notion 載入">↻ 重新載入</button>
+  <header class="masthead">
+    <div class="mast-left">
+      <span class="zh-title">派工轉盤</span>
+      <span class="en-title">THE HONEST WHEEL</span>
+    </div>
+    <div class="mast-right">
+      <span class="stamp" title="本階段不會寫入 Notion">DRY-RUN · 不寫入</span>
+      <button id="refresh" class="ghost" title="重新從 Notion 載入">↻ 重新載入</button>
     </div>
   </header>
 
   <main>
-    <!-- left: pick a task -->
-    <section id="picker">
-      <input id="search" type="search" placeholder="搜尋待指派任務…" autocomplete="off">
+    <aside class="queue">
+      <div class="rail-head">QUEUE<span>待指派</span></div>
+      <input id="search" type="search" placeholder="搜尋任務…" autocomplete="off">
       <ul id="task-list"><li class="empty">載入中…</li></ul>
-    </section>
+    </aside>
 
-    <!-- right: allocate -->
-    <section id="stage">
-      <div id="task-summary" class="hidden"></div>
-
-      <div id="allocator" class="hidden">
-        <div class="wheel-wrap">
-          <div class="pointer">▼</div>
-          <div id="wheel"></div>
-          <button id="spin">轉！</button>
-        </div>
-
-        <div id="cards"></div>
-
-        <div id="controls">
-          <div class="ctl">
-            <label>可用度 <output id="wa-out"></output></label>
-            <input id="wa" type="range" min="0" max="1" step="0.05" class="weight">
-          </div>
-          <div class="ctl">
-            <label>輪替 <output id="wfr-out"></output></label>
-            <input id="wfr" type="range" min="0" max="1" step="0.05" class="weight">
-          </div>
-          <div class="ctl">
-            <label>契合 <output id="wft-out"></output></label>
-            <input id="wft" type="range" min="0" max="1" step="0.05" class="weight">
-          </div>
-          <div class="ctl">
-            <label>命運感 T <output id="temp-out"></output></label>
-            <input id="temp" type="range" min="0.05" max="1" step="0.05" value="0.3">
-          </div>
-          <button id="auto" class="link">↺ 依優先級自動</button>
-        </div>
-
-        <div id="reveal" class="hidden"></div>
+    <section class="stage">
+      <div id="decide-head" class="decide-head hidden">
+        <span class="eyebrow">正在分派</span>
+        <h1 id="decide-title"></h1>
+        <div id="decide-chips" class="chips"></div>
       </div>
 
-      <p id="placeholder">← 從左側挑一張待指派任務開始</p>
+      <div id="board" class="board hidden">
+        <div class="wheel-col">
+          <div class="pointer" aria-hidden="true"></div>
+          <div class="wheel-stage">
+            <svg id="wheel" viewBox="0 0 300 300" role="img" aria-label="中選機率轉盤"></svg>
+            <div class="hub" id="hub"><span>SPIN</span></div>
+          </div>
+          <button id="spin" class="lever">轉<span class="lever-sub">SPIN</span></button>
+        </div>
+
+        <div class="form-col">
+          <div class="rail-head">FORM BOARD<span>中選機率</span></div>
+          <div id="cards" class="form-list"></div>
+
+          <div class="knobs">
+            <div class="knob"><label>可用<output id="wa-out"></output></label><input id="wa" class="weight" type="range" min="0" max="1" step="0.05"></div>
+            <div class="knob"><label>輪替<output id="wfr-out"></output></label><input id="wfr" class="weight" type="range" min="0" max="1" step="0.05"></div>
+            <div class="knob"><label>契合<output id="wft-out"></output></label><input id="wft" class="weight" type="range" min="0" max="1" step="0.05"></div>
+            <div class="knob"><label>命運感<output id="temp-out"></output></label><input id="temp" type="range" min="0.05" max="1" step="0.05" value="0.3"></div>
+            <button id="auto" class="ghost small">↺ 依優先級</button>
+          </div>
+
+          <div id="reveal" class="reveal hidden" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div id="placeholder" class="placeholder">
+        <div class="ph-mark">◴</div>
+        <p>從左側 <b>QUEUE</b> 挑一張待指派任務<br>看四位候選人的真實賠率</p>
+      </div>
     </section>
   </main>
 
