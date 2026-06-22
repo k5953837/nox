@@ -147,6 +147,7 @@ function spin() {
   const onEnd = () => {
     $("wheel").removeEventListener("transitionend", onEnd);
     state.spinning = false;
+    $("spin").disabled = false; // allow re-spin (the obvious roulette gesture)
     state.lastWinner = winner;
     reveal(winner);
     renderCards();
