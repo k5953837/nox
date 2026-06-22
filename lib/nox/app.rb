@@ -60,7 +60,10 @@ module Nox
   ].freeze
 
   class App
-    def initialize
+    def initialize(clipboard: nil)
+      @clipboard           = clipboard || ->(text) { IO.popen("pbcopy", "w") { |io| io.write(text) } }
+      @selection           = Selection.new
+      @pending_anchor      = nil
       @client              = Client.new
       @mode                = :loading
       @loading_message     = ""
@@ -166,16 +169,39 @@ module Nox
 
     def render(frame)
       @terminal_width = frame.area.width
-      case @mode
-      when :loading     then render_loading(frame)
-      when :board       then render_board(frame)
-      when :detail      then render_detail(frame)
-      when :sprint_menu then render_sprint_menu(frame)
-      when :assign_menu then render_assign_menu(frame)
-      when :status_menu then render_status_menu(frame)
-      when :status_filter then render_status_filter(frame)
-      when :help        then render_help(frame)
+      # Mirror this frame's text into a ShadowGrid only while a selection is
+      # live — the live terminal buffer can't be read back (get_cell_at is
+      # TestBackend-only), so the overlay and copy work off this grid. Idle
+      # frames skip the per-cell mirroring entirely.
+      if @selection.active?
+        @shadow = ShadowGrid.new(frame.area.width, frame.area.height)
+        target  = MappingFrame.new(frame, @shadow)
+      else
+        @shadow = nil
+        target  = frame
       end
+      case @mode
+      when :loading     then render_loading(target)
+      when :board       then render_board(target)
+      when :detail      then render_detail(target)
+      when :sprint_menu then render_sprint_menu(target)
+      when :assign_menu then render_assign_menu(target)
+      when :status_menu then render_status_menu(target)
+      when :status_filter then render_status_filter(target)
+      when :help        then render_help(target)
+      end
+      render_selection_overlay(frame) if @selection.active?
+    end
+
+    # Re-styles the selected rectangle from this frame's shadow grid. Only
+    # written text becomes reversed segments — borders and empty gaps are
+    # left untouched, and out-of-range coords are clamped by the grid.
+    def render_selection_overlay(frame)
+      x1, y1, x2, y2 = @selection.rect
+      rows = (y1..y2).flat_map do |y|
+        @shadow.segments(x1, x2, y).map { |x, text| [x, y, text] }
+      end
+      frame.render_widget(SelectionOverlay.new(rows), frame.area) unless rows.empty?
     end
 
     def render_loading(frame)
@@ -325,19 +351,23 @@ module Nox
         ["BOARD",   "j/k move · Enter open · / search · f filter · S status · a assign · o browser · s sprint · ? help · q quit"]
       end
 
-      footer_spans = if @status_message
+      render_footer(frame, footer_area, [
+        @tui.text_span(content: " #{mode_label} ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+        @tui.text_span(content: "  #{hints}", style: @s_dim),
+      ])
+    end
+
+    # Footer line that swaps in the one-shot @status_message when present.
+    # The message is consumed here: it stays visible until the next event
+    # triggers a redraw, then reverts to the default spans.
+    def render_footer(frame, area, default_spans)
+      spans = if @status_message
         [@tui.text_span(content: @status_message, style: @s_yellow)]
       else
-        [
-          @tui.text_span(content: " #{mode_label} ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
-          @tui.text_span(content: "  #{hints}", style: @s_dim),
-        ]
+        default_spans
       end
       @status_message = nil
-      frame.render_widget(
-        @tui.paragraph(text: @tui.text_line(spans: footer_spans)),
-        footer_area
-      )
+      frame.render_widget(@tui.paragraph(text: @tui.text_line(spans: spans)), area)
     end
 
     def render_search_bar(frame, area)
@@ -567,16 +597,11 @@ module Nox
 
       total    = @content_lines.length
       position = total.zero? ? "" : " #{@detail_scroll + 1}-#{[@detail_scroll + @detail_height, total].min}/#{total}  "
-      frame.render_widget(
-        @tui.paragraph(
-          text: @tui.text_line(spans: [
-            @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
-            @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
-            @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
-          ])
-        ),
-        footer_area
-      )
+      render_footer(frame, footer_area, [
+        @tui.text_span(content: " DETAIL ", style: @tui.style(fg: :black, bg: :cyan, modifiers: [:bold])),
+        @tui.text_span(content: "  j/k scroll · n/p next/prev · S status · a assign · o open · ? help · Esc back", style: @s_dim),
+        @tui.text_span(content: position, style: @tui.style(fg: :cyan)),
+      ])
     end
 
     def render_sprint_menu(frame)
@@ -730,6 +755,8 @@ module Nox
     # ── Event Handling ──────────────────────────────────────────────────────────
 
     def handle_event(event)
+      return nil if handle_selection_event(event) == :handled
+
       case @mode
       when :board       then handle_board_event(event)
       when :detail      then handle_detail_event(event)
@@ -1158,6 +1185,65 @@ module Nox
         @status_message = err ? "Failed to load sprint: #{err.message.slice(0, 35)}" : "Switched to: #{selected[:name]}"
       end
       @mode = :board
+    end
+
+    # Global interceptor for mouse selection, ahead of per-mode dispatch.
+    # "down" only records a potential anchor and passes through, so
+    # click-to-select keeps working; the selection starts on the first drag.
+    def handle_selection_event(event)
+      case event
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        @selection.clear
+        @pending_anchor = [x, y]
+        nil
+      in { type: :mouse, kind: "drag", button: "left", x:, y: }
+        unless @selection.active?
+          ax, ay = @pending_anchor || [x, y]
+          area = RatatuiRuby.terminal_area
+          @selection.start(ax, ay, max_x: area.width - 1, max_y: area.height - 1)
+          @last_click_time = 0.0 # a drag is not a click — disarm double-click
+        end
+        @selection.update(x, y)
+        :handled
+      in { type: :mouse, kind: "up", button: "left" }
+        was_active = @selection.active?
+        if was_active
+          copy_selection unless @selection.single_cell?
+          @selection.clear
+        end
+        @pending_anchor = nil
+        was_active ? :handled : nil
+      in { type: :resize }
+        @selection.clear
+        @pending_anchor = nil
+        nil
+      in { type: :none }
+        nil
+      else
+        # Any other real event (keyboard, scroll, paste, focus) invalidates an
+        # active selection: it can change the screen content under the fixed
+        # selection rect, so the overlay would reverse-highlight whatever text
+        # now sits there rather than what the user grabbed. Drop the gesture.
+        # The anchor goes too — cancelling cancels the whole gesture.
+        @selection.clear
+        @pending_anchor = nil
+        nil
+      end
+    end
+
+    def copy_selection
+      text = selection_text
+      @clipboard.call(text)
+      @status_message = "✓ copied #{text.length} chars"
+    rescue StandardError => e
+      @status_message = "✗ copy failed: #{e.message.slice(0, 40)}"
+    end
+
+    def selection_text
+      x1, y1, x2, y2 = @selection.rect
+      return "" unless @shadow
+
+      (y1..y2).map { |y| @shadow.slice(x1, x2, y).rstrip }.join("\n")
     end
 
     def handle_mouse_click(x, y)
