@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>派工轉盤 · Task Roulette</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>派工轉盤 <span class="sub">Task Roulette</span></h1>
+    <div class="header-right">
+      <span class="badge dry">DRY-RUN · Stage 1</span>
+      <button id="refresh" title="重新從 Notion 載入">↻ 重新載入</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- left: pick a task -->
+    <section id="picker">
+      <input id="search" type="search" placeholder="搜尋待指派任務…" autocomplete="off">
+      <ul id="task-list"><li class="empty">載入中…</li></ul>
+    </section>
+
+    <!-- right: allocate -->
+    <section id="stage">
+      <div id="task-summary" class="hidden"></div>
+
+      <div id="allocator" class="hidden">
+        <div class="wheel-wrap">
+          <div class="pointer">▼</div>
+          <div id="wheel"></div>
+          <button id="spin">轉！</button>
+        </div>
+
+        <div id="cards"></div>
+
+        <div id="controls">
+          <div class="ctl">
+            <label>可用度 <output id="wa-out"></output></label>
+            <input id="wa" type="range" min="0" max="1" step="0.05" class="weight">
+          </div>
+          <div class="ctl">
+            <label>輪替 <output id="wfr-out"></output></label>
+            <input id="wfr" type="range" min="0" max="1" step="0.05" class="weight">
+          </div>
+          <div class="ctl">
+            <label>契合 <output id="wft-out"></output></label>
+            <input id="wft" type="range" min="0" max="1" step="0.05" class="weight">
+          </div>
+          <div class="ctl">
+            <label>命運感 T <output id="temp-out"></output></label>
+            <input id="temp" type="range" min="0.05" max="1" step="0.05" value="0.3">
+          </div>
+          <button id="auto" class="link">↺ 依優先級自動</button>
+        </div>
+
+        <div id="reveal" class="hidden"></div>
+      </div>
+
+      <p id="placeholder">← 從左側挑一張待指派任務開始</p>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
