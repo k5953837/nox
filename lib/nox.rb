@@ -12,6 +12,7 @@ require_relative "nox/shadow_grid"
 require_relative "nox/client"
 require_relative "nox/task"
 require_relative "nox/board"
+require_relative "nox/roulette"
 require_relative "nox/app"
 
 module Nox

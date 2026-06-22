@@ -45,6 +45,7 @@ module Nox
     ["ACTIONS", [
       ["S           ", "change status"],
       ["a           ", "assign owners"],
+      ["x           ", "assign by roulette 🎲"],
       ["o           ", "open in browser"],
       ["r           ", "refresh from Notion"],
     ]],
@@ -94,6 +95,11 @@ module Nox
       @help_area           = nil
       @previous_mode       = :board
       @workspace_users     = []
+      @roulette_data       = nil
+      @roulette_area       = nil
+      @roulette_highlight  = 0
+      @roulette_winner     = nil
+      @roulette_phase      = :ready
       @last_click_time     = 0.0
       @last_click_x        = -1
       @last_click_y        = -1
@@ -186,6 +192,7 @@ module Nox
       when :detail      then render_detail(target)
       when :sprint_menu then render_sprint_menu(target)
       when :assign_menu then render_assign_menu(target)
+      when :roulette_menu then render_roulette_menu(target)
       when :status_menu then render_status_menu(target)
       when :status_filter then render_status_filter(target)
       when :help        then render_help(target)
@@ -762,6 +769,7 @@ module Nox
       when :detail      then handle_detail_event(event)
       when :sprint_menu then handle_sprint_menu_event(event)
       when :assign_menu then handle_assign_menu_event(event)
+      when :roulette_menu then handle_roulette_menu_event(event)
       when :status_menu then handle_status_menu_event(event)
       when :status_filter then handle_status_filter_event(event)
       when :help        then handle_help_event(event)
@@ -874,6 +882,8 @@ module Nox
       # ── Global ────────────────────────────────────────────────────────────────
       in { type: :key, code: "a" }
         open_assign_menu(from: :board) if @active_pane == :tasks
+      in { type: :key, code: "x" }
+        open_roulette_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
         open_status_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "s" }
@@ -920,6 +930,8 @@ module Nox
         enter_detail_mode
       in { type: :key, code: "a" }
         open_assign_menu(from: :detail)
+      in { type: :key, code: "x" }
+        open_roulette_menu(from: :detail)
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
         open_status_menu(from: :detail)
       in { type: :key, code: "o" }
@@ -1138,6 +1150,169 @@ module Nox
       @assign_selected_ids = current_task.owner_ids.dup
       @previous_mode       = from
       @mode                = :assign_menu
+    end
+
+    # ── Roulette: weighted owner assignment ───────────────────────────────────
+
+    def open_roulette_menu(from:)
+      return unless current_task
+      task = current_task
+      data = nil
+      err = loading("Reading owners' workload…") do
+        @workspace_users = @client.fetch_users if @workspace_users.empty?
+        data = Roulette.evaluate(client: @client, task: task, users: @workspace_users)
+      end
+      if err
+        @status_message = "Roulette failed: #{err.message.slice(0, 40)}"
+        @mode = from
+        return
+      end
+      if data[:order].empty?
+        @status_message = "No candidate owners found in this workspace"
+        @mode = from
+        return
+      end
+      @roulette_data      = data
+      @roulette_highlight = 0
+      @roulette_winner    = nil
+      @roulette_phase     = :ready
+      @previous_mode      = from
+      @mode               = :roulette_menu
+    end
+
+    def render_roulette_menu(frame)
+      task  = current_task
+      data  = @roulette_data
+      by    = data[:results].each_with_object({}) { |r, h| h[r[:name]] = r }
+      names = data[:order]
+      w     = data[:weights]
+      bar_w = 22
+
+      rows = []
+      rows << @tui.text_line(spans: [
+        @tui.text_span(content: "權重  可用 ", style: @s_dim),
+        @tui.text_span(content: format("%.2f", w[:a]),  style: @s_cyan),
+        @tui.text_span(content: "  輪替 ", style: @s_dim),
+        @tui.text_span(content: format("%.2f", w[:fr]), style: @s_cyan),
+        @tui.text_span(content: "  契合 ", style: @s_dim),
+        @tui.text_span(content: format("%.2f", w[:ft]), style: @s_cyan),
+      ])
+      rows << @tui.text_line(spans: [])
+
+      names.each_with_index do |name, i|
+        r = by[name]
+        next unless r
+        filled  = (r[:prob] * bar_w).round
+        is_win  = @roulette_phase == :revealed && @roulette_winner == name
+        is_spin = @roulette_phase == :spinning && @roulette_highlight == i
+        marker  = is_win ? "▶ " : (is_spin ? "▷ " : "  ")
+        color   = Roulette::COLORS[name] || :white
+        name_st = is_win ? @s_green : (is_spin ? @s_bold_cyan : @tui.style(fg: color, modifiers: [:bold]))
+        bar_st  = is_win ? @s_green : @tui.style(fg: color)
+        pct_st  = is_win ? @s_green : @s_dim
+        rows << @tui.text_line(spans: [
+          @tui.text_span(content: marker, style: name_st),
+          @tui.text_span(content: name.ljust(12), style: name_st),
+          @tui.text_span(content: ("█" * filled) + ("░" * (bar_w - filled)), style: bar_st),
+          @tui.text_span(content: format(" %5.1f%%", r[:prob] * 100), style: pct_st),
+        ])
+      end
+
+      rows << @tui.text_line(spans: [])
+      rows << @tui.text_line(spans: roulette_status_spans)
+
+      @roulette_area = popup_area(frame.area, width: 60, height: rows.length + 2)
+      frame.render_widget(@tui.clear, @roulette_area)
+      frame.render_widget(
+        @tui.paragraph(
+          text: rows,
+          block: @tui.block(
+            title: " 派工轉盤  #{task&.title&.slice(0, 22)} ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @roulette_area
+      )
+    end
+
+    def roulette_status_spans
+      case @roulette_phase
+      when :spinning
+        [@tui.text_span(content: " 🎲 轉動中…", style: @s_yellow)]
+      when :revealed
+        win = @roulette_data[:results].find { |r| r[:name] == @roulette_winner }
+        [
+          @tui.text_span(content: " 🎯 #{@roulette_winner}  ", style: @s_green),
+          @tui.text_span(content: win ? win[:reason] : "", style: @s_dim),
+          @tui.text_span(content: "   Enter 指派 · Space 重轉 · Esc 取消", style: @s_dim),
+        ]
+      else
+        [@tui.text_span(content: " Space 轉盤抽選 · Esc 取消", style: @s_dim)]
+      end
+    end
+
+    def handle_roulette_menu_event(event)
+      case event
+      in { type: :key, code: " " }
+        spin_roulette
+      in { type: :key, code: "enter" }
+        confirm_roulette_assign if @roulette_phase == :revealed
+      in { type: :key, code: "esc" | "q" }
+        @mode = @previous_mode
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        @mode = @previous_mode unless @roulette_area&.contains?(x, y)
+      else
+        nil
+      end
+    end
+
+    def spin_roulette
+      return if @roulette_phase == :spinning
+      winner = weighted_pick(@roulette_data[:results])
+      widx   = @roulette_data[:order].index(winner) || 0
+      animate_spin(widx)
+      @roulette_winner = winner
+      @roulette_phase  = :revealed
+      @tui.draw { |frame| render(frame) }
+    end
+
+    def weighted_pick(results)
+      r   = rand
+      cum = 0.0
+      results.each { |x| cum += x[:prob]; return x[:name] if r <= cum }
+      results.last[:name]
+    end
+
+    # Terminal deceleration: cycle the highlight, slowing, landing on widx.
+    def animate_spin(widx)
+      n = @roulette_data[:order].length
+      return if n.zero?
+      @roulette_phase = :spinning
+      seq = []
+      (n * 4).times { |i| seq << [i % n, 0.035] }
+      last  = seq.empty? ? 0 : seq.last[0]
+      steps = ((widx - last) % n) + n
+      steps.times { |j| seq << [(last + 1 + j) % n, 0.07 + j * 0.045] }
+      seq.each do |idx, delay|
+        @roulette_highlight = idx
+        @tui.draw { |frame| render(frame) }
+        @tui.poll_event(timeout: delay)
+      end
+      @roulette_highlight = widx
+    end
+
+    def confirm_roulette_assign
+      task = current_task
+      return unless task && @roulette_winner
+      win = @roulette_data[:results].find { |r| r[:name] == @roulette_winner }
+      return unless win && win[:user_id]
+      err = loading("Assigning to #{@roulette_winner}…") do
+        @client.update_task_owner(task.id, [win[:user_id]])
+        task.owners = [{ id: win[:user_id], name: @roulette_winner }]
+      end
+      @status_message = err ? "Failed to assign: #{err.message.slice(0, 40)}" : "🎯 Assigned to #{@roulette_winner}"
+      @mode = @previous_mode
     end
 
     def open_status_filter
