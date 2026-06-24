@@ -71,4 +71,15 @@ class RouletteRenderTest < Minitest::Test
       assert_includes s, "Enter"  # "Enter 指派 Adora Xu …"
     end
   end
+
+  def test_help_view_renders_metric_explanation
+    with_test_terminal(WIDTH, HEIGHT) do
+      app = build_app
+      app.instance_variable_set(:@roulette_help, true)
+      RatatuiRuby.draw { |f| app.send(:render, f) }
+      s = screen
+      assert_includes s, "softmax"          # the combine formula
+      assert_includes s, "0.5 / 0.1 / 0.4"  # P0/P1 weights row
+    end
+  end
 end

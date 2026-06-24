@@ -98,6 +98,7 @@ module Nox
       @roulette_data       = nil
       @roulette_area       = nil
       @roulette_winner     = nil
+      @roulette_help       = false
       @last_click_time     = 0.0
       @last_click_x        = -1
       @last_click_y        = -1
@@ -1174,11 +1175,13 @@ module Nox
       end
       @roulette_data   = data
       @roulette_winner = data[:recommendation]
+      @roulette_help   = false
       @previous_mode   = from
       @mode            = :roulette_menu
     end
 
     def render_roulette_menu(frame)
+      return render_roulette_help(frame) if @roulette_help
       task  = current_task
       data  = @roulette_data
       w     = data[:weights]
@@ -1219,7 +1222,7 @@ module Nox
 
       rows << @tui.text_line(spans: [])
       rows << @tui.text_line(spans: [
-        @tui.text_span(content: " Enter 指派 #{@roulette_winner} · Esc 取消", style: @s_dim),
+        @tui.text_span(content: " Enter 指派 #{@roulette_winner} · ? 指標說明 · Esc 取消", style: @s_dim),
       ])
 
       @roulette_area = popup_area(frame.area, width: 60, height: rows.length + 2)
@@ -1237,10 +1240,49 @@ module Nox
       )
     end
 
+    def render_roulette_help(frame)
+      line = ->(txt, st) { @tui.text_line(spans: [@tui.text_span(content: txt, style: st)]) }
+      nl   = @tui.text_line(spans: [])
+      rows = [
+        line.call("分配率＝四位候選人互相比較的「相對適合度」，取最高為建議。", @s_dim),
+        nl,
+        line.call("三個指標（只看目前 sprint，0~1 分）", @s_bold_cyan),
+        line.call("  可用 A   未完成點數越少越高（多人任務點數平分）", @s_dim),
+        line.call("  輪替 Fr  近 14 天被指派越少越高", @s_dim),
+        line.call("  契合 Ft  任務領域/類型 對個人歷史；無標籤→四人皆 0.5", @s_dim),
+        nl,
+        line.call("優先級決定權重（可用 / 輪替 / 契合）", @s_bold_cyan),
+        line.call("  P0·P1   0.5 / 0.1 / 0.4   急：給最閒最懂的", @s_dim),
+        line.call("  其他    0.4 / 0.3 / 0.3   平衡", @s_dim),
+        line.call("  Low     0.3 / 0.5 / 0.2   不急：重輪替", @s_dim),
+        nl,
+        line.call("分數 = 可用×A + 輪替×Fr + 契合×Ft", @s_yellow),
+        line.call("百分比 = 四人分數正規化(softmax)，取最高者（無隨機）", @s_dim),
+        nl,
+        line.call(" ? 返回 · Esc 關閉", @s_dim),
+      ]
+      h = [rows.length + 2, frame.area.height - 2].min
+      @roulette_area = popup_area(frame.area, width: 64, height: h)
+      frame.render_widget(@tui.clear, @roulette_area)
+      frame.render_widget(
+        @tui.paragraph(
+          text: rows,
+          block: @tui.block(
+            title: " 派工建議 · 指標說明 ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @roulette_area
+      )
+    end
+
     def handle_roulette_menu_event(event)
       case event
+      in { type: :key, code: "?" }
+        @roulette_help = !@roulette_help
       in { type: :key, code: "enter" }
-        confirm_roulette_assign
+        confirm_roulette_assign unless @roulette_help
       in { type: :key, code: "esc" | "q" }
         @mode = @previous_mode
       in { type: :mouse, kind: "down", button: "left", x:, y: }
