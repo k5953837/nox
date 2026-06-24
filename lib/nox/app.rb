@@ -1265,7 +1265,7 @@ module Nox
         line.call("三個指標（0~1 分，四人互相比較）", @s_bold_cyan),
         line.call("  可用 A   未完成點數越少越高（多人平分）· 本期 sprint", @s_dim),
         line.call("  輪替 Fr  近 14 天被指派越少越高 · 本期 sprint", @s_dim),
-        line.call("  契合 Ft  領域/類型 對個人歷史；無標籤→0.5 · 全歷史", @s_dim),
+        line.call("  契合 Ft  Fault Domain 對個人歷史；無領域→0.5 · 全歷史", @s_dim),
         nl,
         line.call("優先級決定權重（可用 / 輪替 / 契合）", @s_bold_cyan),
         line.call("  P0·P1   0.5 / 0.1 / 0.4   急：給最閒最懂的", @s_dim),

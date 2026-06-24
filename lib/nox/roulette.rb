@@ -49,12 +49,13 @@ module Nox
       end
     end
 
-    # Raw fit per candidate: overlap of task tags with each candidate's history.
-    def fit_raw(domains, type, aggregates)
+    # Raw fit per candidate: overlap of the task's Fault Domain with each
+    # candidate's history. Ticket `類型` was intentionally dropped — it rewarded
+    # sheer volume / ticket-kind, not real domain expertise. So Ft is honestly
+    # neutral (0.5 for all) whenever the task has no Fault Domain.
+    def fit_raw(domains, aggregates)
       aggregates.map do |a|
-        s = (domains || []).sum { |d| (a[:dom] && a[:dom][d]) || 0 }
-        s += (a[:type] && a[:type][type]) || 0 if type
-        s.to_f
+        (domains || []).sum { |d| (a[:dom] && a[:dom][d]) || 0 }.to_f
       end
     end
 
@@ -74,7 +75,7 @@ module Nox
 
       a_arr  = minmax_inv(open_pts)
       fr_arr = minmax_inv(recent)
-      raw    = fit_raw(task[:domains], task[:type], aggregates)
+      raw    = fit_raw(task[:domains], aggregates)
       ft_arr = (raw.max && raw.max > 0) ? minmax(raw) : Array.new(aggregates.size, 0.5)
 
       w = weights || weights_for(task[:priority])
@@ -123,22 +124,19 @@ module Nox
 
     # Build one candidate aggregate. Two time-scales on purpose:
     #   load + rotation  <- current sprint (sprint_tasks)  = "how busy right now"
-    #   fit (dom/type)    <- full history (history_tasks)   = accumulated expertise
+    #   fit (Fault Domain) <- full history (history_tasks) = accumulated expertise
     # Multi-owner pts are split across co-owners so load isn't double-counted.
     def aggregate(name, user_id, sprint_tasks, history_tasks, today)
       since = (today - 14).to_s
       agg = { name: name, user_id: user_id, open_pts: 0.0, recent: 0,
-              total: sprint_tasks.size, dom: Hash.new(0), type: Hash.new(0) }
+              total: sprint_tasks.size, dom: Hash.new(0) }
       sprint_tasks.each do |t|
         owners = [t.owners.size, 1].max
         agg[:open_pts] += t.points.to_f / owners unless CLOSED.include?(t.status)
         agg[:recent]   += 1 if t.created_at.to_s[0, 10] >= since
       end
       agg[:open_pts] = agg[:open_pts].round(1)
-      history_tasks.each do |t|
-        t.domains.each { |d| agg[:dom][d] += 1 }
-        agg[:type][t.type] += 1 if t.type
-      end
+      history_tasks.each { |t| t.domains.each { |d| agg[:dom][d] += 1 } }
       agg
     end
 

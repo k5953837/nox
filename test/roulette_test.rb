@@ -30,7 +30,18 @@ class RouletteTest < Minitest::Test
   end
 
   def test_fit_raw_counts_domain_overlap
-    assert_equal [4.0, 3.0, 9.0, 3.0], R.fit_raw(["外部渠道與系統整合"], nil, aggs)
+    assert_equal [4.0, 3.0, 9.0, 3.0], R.fit_raw(["外部渠道與系統整合"], aggs)
+  end
+
+  def test_type_does_not_affect_fit
+    # ticket 類型 was dropped from fit. Even though candidate A has 5 "Story"
+    # tasks and B has none, a Story task with no domain stays neutral for both.
+    a = [
+      { name: "A", user_id: "a", open_pts: 10, recent: 1, dom: {}, type: { "Story" => 5 } },
+      { name: "B", user_id: "b", open_pts: 10, recent: 1, dom: {}, type: { "Story" => 0 } },
+    ]
+    res = R.score(aggregates: a, task: { priority: "High", domains: [], type: "Story" })
+    res[:results].each { |r| assert_equal 0.5, r[:ft] }
   end
 
   def test_probs_sum_to_one
