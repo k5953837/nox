@@ -58,15 +58,22 @@ candidate and recommends the highest — **deterministic, no random draw**. Pres
 The percentage shown is **relative suitability** — a ranking of the four
 candidates for *this* task — not a lottery probability.
 
-### Indicators (all scoped to the current sprint)
+### Indicators
 
-| Indicator | Meaning | Source | Normalized to 0–1 |
-|-----------|---------|--------|-------------------|
-| 可用 Availability (A) | how free they are now | sum of `預估點數` over their open (not Done/Archived) tasks; points on multi-owner tasks are split across co-owners | least-loaded → 1.0, most-loaded → 0.0 |
-| 輪替 Rotation (Fr) | how little they've been assigned lately | count of their tasks created in the last 14 days (`Created time` ≈ assignment time) | fewest → 1.0, most → 0.0 |
-| 契合 Fit (Ft) | domain experience | overlap of the task's `Fault Domain` / `類型` with their history; **neutral 0.5 for everyone when the task has no tags** | best match → 1.0 |
+Each is normalized **relative to the other three candidates** (min → 0, max → 1),
+not absolute — `A = 1.0` means "the freest of these four," not "completely idle."
+They use **two time-scales on purpose**: current state (this sprint) for
+load/rotation, accumulated expertise (all history) for fit.
 
-All three are **relative** (the four candidates compared against each other), not absolute — `A = 1.0` means "the freest of these four," not "completely idle."
+| Indicator | Meaning | Scope | Source → 0–1 |
+|-----------|---------|-------|--------------|
+| 可用 Availability (A) | how free they are now | **current sprint** | sum of `預估點數` over open (not Done/Archived) tasks, multi-owner points split → least-loaded = 1.0 |
+| 輪替 Rotation (Fr) | how little they've been assigned lately | **current sprint** | count of tasks created in the last 14 days (`Created time` ≈ assignment) → fewest = 1.0 |
+| 契合 Fit (Ft) | domain expertise | **all history** | overlap of the task's `Fault Domain` / `類型` with their full task history; neutral 0.5 when the task has no tags → best match = 1.0 |
+
+Why two scales: "how busy you are" is a *now* question (this sprint), but "do you
+know this domain" is an *accumulated* trait — one sprint is too short and noisy to
+see it, so fit reads full history.
 
 ### Priority sets the weights
 
@@ -84,8 +91,10 @@ score = wA·A + wFr·Fr + wFt·Ft
 pick  = argmax(%)           # the highest is recommended (no randomness)
 ```
 
-Engine: `lib/nox/roulette.rb` (pure, unit-tested). Scope = the current sprint
-already loaded in `@board`, so it's instant (no extra Notion fetch).
+Engine: `lib/nox/roulette.rb` (pure, unit-tested). Load/rotation come from the
+current sprint already in `@board` (instant); fit reads each candidate's full
+history (one owner-filtered query each, fetched once per session and cached,
+invalidated on refresh). Owners are written to the Notion `owner` property on Enter.
 
 ## License
 

@@ -67,11 +67,13 @@ class RouletteTest < Minitest::Test
     task  = Struct.new(:priority, :domains, :type).new("High", [], nil)
     # Hsiao Jimmy intentionally absent from the workspace users.
     users = [{ id: "a", name: "Adora Xu" }, { id: "c", name: "Lin CJ" }, { id: "g", name: "Galen Lin" }]
-    tasks = [
-      FT.new(["Adora Xu"],  [1], "In Progress", 5, "2026-06-20", ["介面操作異常"], "Bug"),
+    sprint = [
+      FT.new(["Adora Xu"],  [1], "In Progress", 5, "2026-06-20", [], nil),
       FT.new(["Galen Lin"], [1], "In Progress", 8, "2026-06-20", [], nil),
     ]
-    res = R.evaluate(tasks: tasks, task: task, users: users, today: Date.new(2026, 6, 22))
+    history = { "Adora Xu" => [FT.new(["Adora Xu"], [1], "Done", 0, "2025-01-01", ["介面操作異常"], "Bug")] }
+    res = R.evaluate(sprint_tasks: sprint, history_by_name: history, task: task,
+                     users: users, today: Date.new(2026, 6, 22))
 
     assert_equal ["Adora Xu", "Lin CJ", "Galen Lin"], res[:order]
     assert_equal ["Hsiao Jimmy"], res[:missing]
@@ -80,14 +82,20 @@ class RouletteTest < Minitest::Test
     assert_includes res[:order], res[:recommendation]
   end
 
-  def test_aggregate_splits_multiowner_points
+  def test_aggregate_splits_sprint_points_and_reads_fit_from_history
     t = Struct.new(:owners, :status, :points, :created_at, :domains, :type)
-    tasks = [
-      t.new([1, 2], "In Progress", 8, "2026-06-20", ["介面操作異常"], "Bug"), # 8/2 = 4 pts
-      t.new([1],    "Done",        5, "2026-06-20", [], nil),                  # closed -> 0
+    # load/rotation come from the sprint list (note: no domains here)
+    sprint = [
+      t.new([1, 2], "In Progress", 8, "2026-06-20", [], nil), # 8/2 = 4 pts
+      t.new([1],    "Done",        5, "2026-06-20", [], nil),  # closed -> 0
     ]
-    agg = R.aggregate("X", "x", tasks, Date.new(2026, 6, 22))
-    assert_in_delta 4.0, agg[:open_pts], 1e-6
-    assert_equal 1, agg[:dom]["介面操作異常"]
+    # fit comes from the full-history list
+    history = [
+      t.new([1], "Done", 0, "2025-01-01", ["介面操作異常"], "Bug"),
+      t.new([1], "Done", 0, "2025-02-01", ["介面操作異常"], nil),
+    ]
+    agg = R.aggregate("X", "x", sprint, history, Date.new(2026, 6, 22))
+    assert_in_delta 4.0, agg[:open_pts], 1e-6      # load = current sprint
+    assert_equal 2, agg[:dom]["介面操作異常"]        # fit = full history
   end
 end

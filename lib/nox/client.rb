@@ -70,6 +70,27 @@ module Nox
       tasks
     end
 
+    # All tasks (across all sprints) where the user is an owner. Used by
+    # Nox::Roulette to build each candidate's domain/type expertise profile
+    # (fit), which wants long-term history — unlike load/rotation (current sprint).
+    def fetch_tasks_by_owner(user_id)
+      tasks = []
+      cursor = nil
+      loop do
+        params = {
+          database_id: @database_id,
+          page_size: 100,
+          filter: { property: "owner", people: { contains: user_id } }
+        }
+        params[:start_cursor] = cursor if cursor
+        response = @client.database_query(**params)
+        response.results.each { |r| tasks << Task.from_notion(r) }
+        break unless response.has_more
+        cursor = response.next_cursor
+      end
+      tasks
+    end
+
     def fetch_users
       users = []
       cursor = nil

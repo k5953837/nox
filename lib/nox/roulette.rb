@@ -121,31 +121,32 @@ module Nox
 
     # ── aggregation + Notion I/O ────────────────────────────────────────────────
 
-    # Build one aggregate from a candidate's owned Task list (multi-owner pts
-    # are split across co-owners so load isn't double-counted).
-    def aggregate(name, user_id, tasks, today)
+    # Build one candidate aggregate. Two time-scales on purpose:
+    #   load + rotation  <- current sprint (sprint_tasks)  = "how busy right now"
+    #   fit (dom/type)    <- full history (history_tasks)   = accumulated expertise
+    # Multi-owner pts are split across co-owners so load isn't double-counted.
+    def aggregate(name, user_id, sprint_tasks, history_tasks, today)
       since = (today - 14).to_s
       agg = { name: name, user_id: user_id, open_pts: 0.0, recent: 0,
-              total: tasks.size, dom: Hash.new(0), type: Hash.new(0) }
-      tasks.each do |t|
+              total: sprint_tasks.size, dom: Hash.new(0), type: Hash.new(0) }
+      sprint_tasks.each do |t|
         owners = [t.owners.size, 1].max
         agg[:open_pts] += t.points.to_f / owners unless CLOSED.include?(t.status)
         agg[:recent]   += 1 if t.created_at.to_s[0, 10] >= since
+      end
+      agg[:open_pts] = agg[:open_pts].round(1)
+      history_tasks.each do |t|
         t.domains.each { |d| agg[:dom][d] += 1 }
         agg[:type][t.type] += 1 if t.type
       end
-      agg[:open_pts] = agg[:open_pts].round(1)
       agg
     end
 
-    # Score candidates against `task`, using the CURRENT-SPRINT task list for
-    # load/rotation/fit (so "load" means this sprint's load, not all-time —
-    # consistent with nox being sprint-first; also instant since the board is
-    # already in memory).
-    #
-    # `tasks` is the current sprint's [Nox::Task]; `task` is the Nox::Task being
-    # assigned; `users` is [{id:, name:}] from Client#fetch_users (for ids).
-    def evaluate(tasks:, task:, users:, today: Date.today, temperature: 0.3)
+    # Score candidates against `task`. Hybrid time-scales (by design):
+    #   sprint_tasks    : current sprint [Nox::Task]            -> load + rotation
+    #   history_by_name : { name => [Nox::Task] full history }  -> fit (expertise)
+    # `task` is the Nox::Task being assigned; `users` is [{id:, name:}] (for ids).
+    def evaluate(sprint_tasks:, history_by_name:, task:, users:, today: Date.today, temperature: 0.3)
       id_for = WEIGHTED_OWNERS.each_with_object({}) do |name, h|
         h[name] = (users.find { |u| u[:name] == name } || {})[:id]
       end
@@ -153,8 +154,8 @@ module Nox
       # Only score owners we can resolve to a Notion id (needed to write back).
       order = WEIGHTED_OWNERS.select { |n| id_for[n] }
       aggregates = order.map do |name|
-        owned = tasks.select { |t| t.owner_names.include?(name) }
-        aggregate(name, id_for[name], owned, today)
+        sprint_owned = sprint_tasks.select { |t| t.owner_names.include?(name) }
+        aggregate(name, id_for[name], sprint_owned, history_by_name[name] || [], today)
       end
 
       task_attrs = { priority: task.priority, domains: task.domains, type: task.type }

@@ -99,6 +99,7 @@ module Nox
       @roulette_area       = nil
       @roulette_winner     = nil
       @roulette_help       = false
+      @fit_history         = nil
       @last_click_time     = 0.0
       @last_click_x        = -1
       @last_click_y        = -1
@@ -1158,16 +1159,21 @@ module Nox
 
     def open_roulette_menu(from:)
       return unless current_task
-      if @workspace_users.empty?
-        err = loading("Loading users…") { @workspace_users = @client.fetch_users }
+      if @workspace_users.empty? || @fit_history.nil?
+        err = loading("Reading owners' history…") do
+          @workspace_users = @client.fetch_users if @workspace_users.empty?
+          @fit_history ||= build_fit_history
+        end
         if err
           @status_message = "Suggestion failed: #{err.message.slice(0, 40)}"
           @mode = from
           return
         end
       end
-      # Scored against the CURRENT sprint already in @board — instant, no fetch.
-      data = Roulette.evaluate(tasks: @board.every_task, task: current_task, users: @workspace_users)
+      # load/rotation from the current sprint (in @board); fit from full history
+      # (@fit_history, fetched once per session).
+      data = Roulette.evaluate(sprint_tasks: @board.every_task, history_by_name: @fit_history,
+                               task: current_task, users: @workspace_users)
       if data[:order].empty?
         @status_message = "No candidate owners found in this workspace"
         @mode = from
@@ -1178,6 +1184,16 @@ module Nox
       @roulette_help   = false
       @previous_mode   = from
       @mode            = :roulette_menu
+    end
+
+    # Full-history task list per candidate, for the fit/expertise signal. Slow
+    # (one owner-filtered query each), so fetched once per session and cached in
+    # @fit_history; invalidated on refresh.
+    def build_fit_history
+      Roulette::WEIGHTED_OWNERS.each_with_object({}) do |name, h|
+        user = @workspace_users.find { |u| u[:name] == name }
+        h[name] = user ? @client.fetch_tasks_by_owner(user[:id]) : []
+      end
     end
 
     def render_roulette_menu(frame)
@@ -1246,10 +1262,10 @@ module Nox
       rows = [
         line.call("分配率＝四位候選人互相比較的「相對適合度」，取最高為建議。", @s_dim),
         nl,
-        line.call("三個指標（只看目前 sprint，0~1 分）", @s_bold_cyan),
-        line.call("  可用 A   未完成點數越少越高（多人任務點數平分）", @s_dim),
-        line.call("  輪替 Fr  近 14 天被指派越少越高", @s_dim),
-        line.call("  契合 Ft  任務領域/類型 對個人歷史；無標籤→四人皆 0.5", @s_dim),
+        line.call("三個指標（0~1 分，四人互相比較）", @s_bold_cyan),
+        line.call("  可用 A   未完成點數越少越高（多人平分）· 本期 sprint", @s_dim),
+        line.call("  輪替 Fr  近 14 天被指派越少越高 · 本期 sprint", @s_dim),
+        line.call("  契合 Ft  領域/類型 對個人歷史；無標籤→0.5 · 全歷史", @s_dim),
         nl,
         line.call("優先級決定權重（可用 / 輪替 / 契合）", @s_bold_cyan),
         line.call("  P0·P1   0.5 / 0.1 / 0.4   急：給最閒最懂的", @s_dim),
@@ -1560,6 +1576,7 @@ module Nox
         tasks = @client.fetch_tasks_by_sprint(@current_sprint[:id])
         @board.refresh(tasks)
       end
+      @fit_history = nil  # force re-fetch of expertise history on next roulette
 
       # Restore owner filter — fall back to "(all)" if owner no longer exists
       if saved_owner_name && (new_idx = @board.all_owners.index(saved_owner_name))
