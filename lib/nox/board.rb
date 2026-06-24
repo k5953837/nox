@@ -4,7 +4,7 @@ require "set"
 
 module Nox
   class Board
-    attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query, :status_filter
+    attr_reader :all_tasks, :filtered_tasks, :current_row, :search_query, :status_filter, :every_task
 
     def initialize(tasks)
       ingest(tasks)

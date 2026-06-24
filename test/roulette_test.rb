@@ -60,18 +60,18 @@ class RouletteTest < Minitest::Test
     assert_in_delta 1.0, high.sum, 1e-9
   end
 
-  class FakeClient
-    FT = Struct.new(:owners, :status, :points, :created_at, :domains, :type)
-    def fetch_tasks_by_owner(uid)
-      [FT.new([{ id: uid }], "In Progress", 5, "2026-06-20", ["介面操作異常"], "Bug")]
-    end
-  end
+  # Fake task responding to the bits evaluate/aggregate use.
+  FT = Struct.new(:owner_names, :owners, :status, :points, :created_at, :domains, :type)
 
   def test_evaluate_filters_unresolved_owners_and_returns_order
     task  = Struct.new(:priority, :domains, :type).new("High", [], nil)
     # Hsiao Jimmy intentionally absent from the workspace users.
     users = [{ id: "a", name: "Adora Xu" }, { id: "c", name: "Lin CJ" }, { id: "g", name: "Galen Lin" }]
-    res = R.evaluate(client: FakeClient.new, task: task, users: users, today: Date.new(2026, 6, 22))
+    tasks = [
+      FT.new(["Adora Xu"],  [1], "In Progress", 5, "2026-06-20", ["介面操作異常"], "Bug"),
+      FT.new(["Galen Lin"], [1], "In Progress", 8, "2026-06-20", [], nil),
+    ]
+    res = R.evaluate(tasks: tasks, task: task, users: users, today: Date.new(2026, 6, 22))
 
     assert_equal ["Adora Xu", "Lin CJ", "Galen Lin"], res[:order]
     assert_equal ["Hsiao Jimmy"], res[:missing]

@@ -1157,17 +1157,16 @@ module Nox
 
     def open_roulette_menu(from:)
       return unless current_task
-      task = current_task
-      data = nil
-      err = loading("Reading owners' workload…") do
-        @workspace_users = @client.fetch_users if @workspace_users.empty?
-        data = Roulette.evaluate(client: @client, task: task, users: @workspace_users)
+      if @workspace_users.empty?
+        err = loading("Loading users…") { @workspace_users = @client.fetch_users }
+        if err
+          @status_message = "Suggestion failed: #{err.message.slice(0, 40)}"
+          @mode = from
+          return
+        end
       end
-      if err
-        @status_message = "Suggestion failed: #{err.message.slice(0, 40)}"
-        @mode = from
-        return
-      end
+      # Scored against the CURRENT sprint already in @board — instant, no fetch.
+      data = Roulette.evaluate(tasks: @board.every_task, task: current_task, users: @workspace_users)
       if data[:order].empty?
         @status_message = "No candidate owners found in this workspace"
         @mode = from

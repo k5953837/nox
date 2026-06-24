@@ -138,18 +138,23 @@ module Nox
       agg
     end
 
-    # Full pipeline: fetch each candidate's history, score against `task`.
-    # `task` is a Nox::Task; `users` is [{id:, name:}] from Client#fetch_users.
-    def evaluate(client:, task:, users:, today: Date.today, temperature: 0.3)
+    # Score candidates against `task`, using the CURRENT-SPRINT task list for
+    # load/rotation/fit (so "load" means this sprint's load, not all-time —
+    # consistent with nox being sprint-first; also instant since the board is
+    # already in memory).
+    #
+    # `tasks` is the current sprint's [Nox::Task]; `task` is the Nox::Task being
+    # assigned; `users` is [{id:, name:}] from Client#fetch_users (for ids).
+    def evaluate(tasks:, task:, users:, today: Date.today, temperature: 0.3)
       id_for = WEIGHTED_OWNERS.each_with_object({}) do |name, h|
         h[name] = (users.find { |u| u[:name] == name } || {})[:id]
       end
 
-      # Only score owners we can actually resolve (and therefore write back).
-      # Stable WEIGHTED_OWNERS order drives the wheel layout + spin landing.
+      # Only score owners we can resolve to a Notion id (needed to write back).
       order = WEIGHTED_OWNERS.select { |n| id_for[n] }
       aggregates = order.map do |name|
-        aggregate(name, id_for[name], client.fetch_tasks_by_owner(id_for[name]), today)
+        owned = tasks.select { |t| t.owner_names.include?(name) }
+        aggregate(name, id_for[name], owned, today)
       end
 
       task_attrs = { priority: task.priority, domains: task.domains, type: task.type }
