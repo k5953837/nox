@@ -9,6 +9,7 @@ A beautiful Notion TUI client written in Ruby.
 - 🔍 Search tasks
 - ✏️ Update task status
 - 🎨 Color-coded priorities
+- 🎯 Workload-aware auto-assign suggestion (`x`)
 
 ## Installation
 
@@ -43,7 +44,57 @@ cp .env.example .env
 | `Enter` | View task details |
 | `/` | Search |
 | `r` | Refresh |
+| `x` | Auto-assign suggestion (press `?` in the popup for the metrics) |
 | `q` | Quit |
+
+## Auto-assign (派工建議)
+
+Press `x` on a task to get a workload-aware **assignment suggestion** among a
+fixed set of owners (Adora Xu / Lin CJ / Galen Lin / Hsiao Jimmy). It scores each
+candidate and recommends the highest — **deterministic, no random draw**. Press
+`?` inside the popup for an in-app summary; Enter assigns (writes the Notion
+`owner`), Esc cancels.
+
+The percentage shown is **relative suitability** — a ranking of the four
+candidates for *this* task — not a lottery probability.
+
+### Indicators
+
+Each is normalized **relative to the other three candidates** (min → 0, max → 1),
+not absolute — `A = 1.0` means "the freest of these four," not "completely idle."
+They use **two time-scales on purpose**: current state (this sprint) for
+load/rotation, accumulated expertise (all history) for fit.
+
+| Indicator | Meaning | Scope | Source → 0–1 |
+|-----------|---------|-------|--------------|
+| 可用 Availability (A) | how free they are now | **current sprint** | sum of `預估點數` over open (not Done/Archived) tasks, multi-owner points split → least-loaded = 1.0 |
+| 輪替 Rotation (Fr) | how little they've been assigned lately | **current sprint** | count of tasks created in the last 14 days (`Created time` ≈ assignment) → fewest = 1.0 |
+| 契合 Fit (Ft) | domain expertise | **all history** | overlap of the task's `Fault Domain` with their full task history; neutral 0.5 when the task has no Fault Domain → best match = 1.0 (ticket `類型` excluded — it rewards volume, not expertise). When a task has **no** Fault Domain, it's **inferred from the title** via a curated keyword map (`DOMAIN_KEYWORDS`, ~73% precision when it fires) and flagged as 「推測」 in the popup |
+
+Why two scales: "how busy you are" is a *now* question (this sprint), but "do you
+know this domain" is an *accumulated* trait — one sprint is too short and noisy to
+see it, so fit reads full history.
+
+### Priority sets the weights
+
+| Priority | A | Fr | Ft | Intent |
+|----------|---|----|----|--------|
+| `P0` / `P1` (urgent) | 0.5 | 0.1 | 0.4 | give it to someone free and capable; don't spread for fairness |
+| `P2` / `P3` / `High` / `Medium` / none | 0.4 | 0.3 | 0.3 | balanced |
+| `Low` | 0.3 | 0.5 | 0.2 | not urgent; favor fair rotation |
+
+### How it combines
+
+```
+score = wA·A + wFr·Fr + wFt·Ft
+%     = softmax(scores)     # the four percentages sum to 100
+pick  = argmax(%)           # the highest is recommended (no randomness)
+```
+
+Engine: `lib/nox/roulette.rb` (pure, unit-tested). Load/rotation come from the
+current sprint already in `@board` (instant); fit reads each candidate's full
+history (one owner-filtered query each, fetched once per session and cached,
+invalidated on refresh). Owners are written to the Notion `owner` property on Enter.
 
 ## License
 

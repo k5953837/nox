@@ -45,6 +45,7 @@ module Nox
     ["ACTIONS", [
       ["S           ", "change status"],
       ["a           ", "assign owners"],
+      ["x           ", "auto-assign (best fit)"],
       ["o           ", "open in browser"],
       ["r           ", "refresh from Notion"],
     ]],
@@ -94,6 +95,11 @@ module Nox
       @help_area           = nil
       @previous_mode       = :board
       @workspace_users     = []
+      @roulette_data       = nil
+      @roulette_area       = nil
+      @roulette_winner     = nil
+      @roulette_help       = false
+      @fit_history         = nil
       @last_click_time     = 0.0
       @last_click_x        = -1
       @last_click_y        = -1
@@ -186,6 +192,7 @@ module Nox
       when :detail      then render_detail(target)
       when :sprint_menu then render_sprint_menu(target)
       when :assign_menu then render_assign_menu(target)
+      when :roulette_menu then render_roulette_menu(target)
       when :status_menu then render_status_menu(target)
       when :status_filter then render_status_filter(target)
       when :help        then render_help(target)
@@ -762,6 +769,7 @@ module Nox
       when :detail      then handle_detail_event(event)
       when :sprint_menu then handle_sprint_menu_event(event)
       when :assign_menu then handle_assign_menu_event(event)
+      when :roulette_menu then handle_roulette_menu_event(event)
       when :status_menu then handle_status_menu_event(event)
       when :status_filter then handle_status_filter_event(event)
       when :help        then handle_help_event(event)
@@ -874,6 +882,8 @@ module Nox
       # ── Global ────────────────────────────────────────────────────────────────
       in { type: :key, code: "a" }
         open_assign_menu(from: :board) if @active_pane == :tasks
+      in { type: :key, code: "x" }
+        open_roulette_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
         open_status_menu(from: :board) if @active_pane == :tasks
       in { type: :key, code: "s" }
@@ -920,6 +930,8 @@ module Nox
         enter_detail_mode
       in { type: :key, code: "a" }
         open_assign_menu(from: :detail)
+      in { type: :key, code: "x" }
+        open_roulette_menu(from: :detail)
       in { type: :key, code: "S" } | { type: :key, code: "s", modifiers: ["shift"] }
         open_status_menu(from: :detail)
       in { type: :key, code: "o" }
@@ -1138,6 +1150,186 @@ module Nox
       @assign_selected_ids = current_task.owner_ids.dup
       @previous_mode       = from
       @mode                = :assign_menu
+    end
+
+    # ── Auto-assign: recommend the highest-scoring owner ──────────────────────
+    # Selection is argmax — the top-ranked candidate, deterministic, no random
+    # draw. The percentages are relative suitability from load + rotation + fit,
+    # priority-weighted (see Nox::Roulette).
+
+    def open_roulette_menu(from:)
+      return unless current_task
+      if @workspace_users.empty? || @fit_history.nil?
+        err = loading("Reading owners' history…") do
+          @workspace_users = @client.fetch_users if @workspace_users.empty?
+          @fit_history ||= build_fit_history
+        end
+        if err
+          @status_message = "Suggestion failed: #{err.message.slice(0, 40)}"
+          @mode = from
+          return
+        end
+      end
+      # load/rotation from the current sprint (in @board); fit from full history
+      # (@fit_history, fetched once per session).
+      data = Roulette.evaluate(sprint_tasks: @board.every_task, history_by_name: @fit_history,
+                               task: current_task, users: @workspace_users)
+      if data[:order].empty?
+        @status_message = "No candidate owners found in this workspace"
+        @mode = from
+        return
+      end
+      @roulette_data   = data
+      @roulette_winner = data[:recommendation]
+      @roulette_help   = false
+      @previous_mode   = from
+      @mode            = :roulette_menu
+    end
+
+    # Full-history task list per candidate, for the fit/expertise signal. Slow
+    # (one owner-filtered query each), so fetched once per session and cached in
+    # @fit_history; invalidated on refresh.
+    def build_fit_history
+      Roulette::WEIGHTED_OWNERS.each_with_object({}) do |name, h|
+        user = @workspace_users.find { |u| u[:name] == name }
+        h[name] = user ? @client.fetch_tasks_by_owner(user[:id]) : []
+      end
+    end
+
+    def render_roulette_menu(frame)
+      return render_roulette_help(frame) if @roulette_help
+      task  = current_task
+      data  = @roulette_data
+      w     = data[:weights]
+      bar_w = 22
+
+      rows = []
+      rows << @tui.text_line(spans: [
+        @tui.text_span(content: "權重  可用 ", style: @s_dim),
+        @tui.text_span(content: format("%.2f", w[:a]),  style: @s_cyan),
+        @tui.text_span(content: "  輪替 ", style: @s_dim),
+        @tui.text_span(content: format("%.2f", w[:fr]), style: @s_cyan),
+        @tui.text_span(content: "  契合 ", style: @s_dim),
+        @tui.text_span(content: format("%.2f", w[:ft]), style: @s_cyan),
+      ])
+      dom = data[:effective_domains] || []
+      if dom.empty?
+        rows << @tui.text_line(spans: [@tui.text_span(content: "領域  無 → 契合中性", style: @s_dim)])
+      else
+        rows << @tui.text_line(spans: [
+          @tui.text_span(content: "領域  #{dom.join('、')} ", style: @s_dim),
+          @tui.text_span(content: data[:domain_inferred] ? "（標題推測）" : "（已標）",
+                         style: data[:domain_inferred] ? @s_yellow : @s_green),
+        ])
+      end
+      rows << @tui.text_line(spans: [])
+
+      # results are pre-sorted by score (desc); rank 0 is the recommendation.
+      data[:results].each_with_index do |r, rank|
+        is_top = rank.zero?
+        filled = (r[:prob] * bar_w).round
+        color  = Roulette::COLORS[r[:name]] || :white
+        marker = is_top ? "▶ " : "  "
+        nm_st  = is_top ? @s_green : @tui.style(fg: color, modifiers: [:bold])
+        bar_st = is_top ? @s_green : @tui.style(fg: color)
+        pct_st = is_top ? @s_green : @s_dim
+        rows << @tui.text_line(spans: [
+          @tui.text_span(content: marker, style: nm_st),
+          @tui.text_span(content: r[:name].ljust(12), style: nm_st),
+          @tui.text_span(content: ("█" * filled) + ("░" * (bar_w - filled)), style: bar_st),
+          @tui.text_span(content: format(" %5.1f%%", r[:prob] * 100), style: pct_st),
+        ])
+        next unless is_top
+        rows << @tui.text_line(spans: [
+          @tui.text_span(content: "    建議理由：", style: @s_green),
+          @tui.text_span(content: r[:reason], style: @s_dim),
+        ])
+      end
+
+      rows << @tui.text_line(spans: [])
+      rows << @tui.text_line(spans: [
+        @tui.text_span(content: " Enter 指派 #{@roulette_winner} · ? 指標說明 · Esc 取消", style: @s_dim),
+      ])
+
+      @roulette_area = popup_area(frame.area, width: 60, height: rows.length + 2)
+      frame.render_widget(@tui.clear, @roulette_area)
+      frame.render_widget(
+        @tui.paragraph(
+          text: rows,
+          block: @tui.block(
+            title: " 派工建議  #{task&.title&.slice(0, 20)} ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @roulette_area
+      )
+    end
+
+    def render_roulette_help(frame)
+      line = ->(txt, st) { @tui.text_line(spans: [@tui.text_span(content: txt, style: st)]) }
+      nl   = @tui.text_line(spans: [])
+      rows = [
+        line.call("分配率＝四位候選人互相比較的「相對適合度」，取最高為建議。", @s_dim),
+        nl,
+        line.call("三個指標（0~1 分，四人互相比較）", @s_bold_cyan),
+        line.call("  可用 A   未完成點數越少越高（多人平分）· 本期 sprint", @s_dim),
+        line.call("  輪替 Fr  近 14 天被指派越少越高 · 本期 sprint", @s_dim),
+        line.call("  契合 Ft  Fault Domain 對個人歷史；無領域→0.5 · 全歷史", @s_dim),
+        line.call("           無領域時由標題關鍵字推測（標示「推測」，約7成準）", @s_dim),
+        nl,
+        line.call("優先級決定權重（可用 / 輪替 / 契合）", @s_bold_cyan),
+        line.call("  P0·P1   0.5 / 0.1 / 0.4   急：給最閒最懂的", @s_dim),
+        line.call("  其他    0.4 / 0.3 / 0.3   平衡", @s_dim),
+        line.call("  Low     0.3 / 0.5 / 0.2   不急：重輪替", @s_dim),
+        nl,
+        line.call("分數 = 可用×A + 輪替×Fr + 契合×Ft", @s_yellow),
+        line.call("百分比 = 四人分數正規化(softmax)，取最高者（無隨機）", @s_dim),
+        nl,
+        line.call(" ? 返回 · Esc 關閉", @s_dim),
+      ]
+      h = [rows.length + 2, frame.area.height - 2].min
+      @roulette_area = popup_area(frame.area, width: 64, height: h)
+      frame.render_widget(@tui.clear, @roulette_area)
+      frame.render_widget(
+        @tui.paragraph(
+          text: rows,
+          block: @tui.block(
+            title: " 派工建議 · 指標說明 ",
+            borders: [:all],
+            border_style: @s_bold_cyan
+          )
+        ),
+        @roulette_area
+      )
+    end
+
+    def handle_roulette_menu_event(event)
+      case event
+      in { type: :key, code: "?" }
+        @roulette_help = !@roulette_help
+      in { type: :key, code: "enter" }
+        confirm_roulette_assign unless @roulette_help
+      in { type: :key, code: "esc" | "q" }
+        @mode = @previous_mode
+      in { type: :mouse, kind: "down", button: "left", x:, y: }
+        @mode = @previous_mode unless @roulette_area&.contains?(x, y)
+      else
+        nil
+      end
+    end
+
+    def confirm_roulette_assign
+      task = current_task
+      return unless task && @roulette_winner
+      win = @roulette_data[:results].find { |r| r[:name] == @roulette_winner }
+      return unless win && win[:user_id]
+      err = loading("Assigning to #{@roulette_winner}…") do
+        @client.update_task_owner(task.id, [win[:user_id]])
+        task.owners = [{ id: win[:user_id], name: @roulette_winner }]
+      end
+      @status_message = err ? "Failed to assign: #{err.message.slice(0, 40)}" : "🎯 Assigned to #{@roulette_winner}"
+      @mode = @previous_mode
     end
 
     def open_status_filter
@@ -1395,6 +1587,7 @@ module Nox
         tasks = @client.fetch_tasks_by_sprint(@current_sprint[:id])
         @board.refresh(tasks)
       end
+      @fit_history = nil  # force re-fetch of expertise history on next roulette
 
       # Restore owner filter — fall back to "(all)" if owner no longer exists
       if saved_owner_name && (new_idx = @board.all_owners.index(saved_owner_name))

@@ -3,11 +3,11 @@
 module Nox
   class Task
     attr_reader :id, :title, :status, :priority, :owners, :url, :completion_time, :updated_at,
-                :parent_id, :sub_item_ids
+                :parent_id, :sub_item_ids, :points, :domains, :type, :created_at
     attr_writer :owners, :status
 
     def initialize(id:, title:, status:, priority:, owners:, url:, completion_time:, updated_at:,
-                   parent_id: nil, sub_item_ids: [])
+                   parent_id: nil, sub_item_ids: [], points: nil, domains: [], type: nil, created_at: nil)
       @id = id
       @title = title
       @status = status
@@ -18,6 +18,10 @@ module Nox
       @updated_at = updated_at
       @parent_id = parent_id
       @sub_item_ids = sub_item_ids || []
+      @points = points
+      @domains = domains || []
+      @type = type
+      @created_at = created_at
     end
 
     def self.from_notion(page)
@@ -32,6 +36,12 @@ module Nox
       parent_rel = props.dig("Parent-task", "relation") || []
       sub_rel    = props.dig("Sub-tasks", "relation") || []
 
+      # Fields used by the assignment roulette (Nox::Roulette).
+      points  = props.dig("預估點數", "number")
+      domains = (props.dig("Fault Domain", "multi_select") || []).map { |o| o["name"] }
+      type    = props.dig("類型", "select", "name")
+      created = props.dig("Created time", "created_time")
+
       new(
         id: page.id,
         title: title,
@@ -42,7 +52,11 @@ module Nox
         completion_time: completion_time,
         updated_at: page.last_edited_time,
         parent_id: parent_rel.first&.dig("id"),
-        sub_item_ids: sub_rel.map { |r| r["id"] }
+        sub_item_ids: sub_rel.map { |r| r["id"] },
+        points: points,
+        domains: domains,
+        type: type,
+        created_at: created
       )
     end
 
