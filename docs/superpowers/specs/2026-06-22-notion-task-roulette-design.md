@@ -1,8 +1,15 @@
 # 派工轉盤（Notion Task Roulette）— 設計文件
 
 **日期**：2026-06-22
-**狀態**：待 review
+**狀態**：已實作，但**設計已大幅演進**（本文件保留為最初 brainstorm 紀錄）
 **作者**：brainstorming 協作產出
+
+> ⚠️ **此文件是最早的 web 版設計，實作時已轉向，請勿照本文件理解現況。**
+> 最終實作為 **nox 的 TUI 功能**（非獨立 web 工具）：按 `x` → 派工建議 popup。
+> 主要演進：①web → nox TUI（ratatui_ruby）；②加權隨機抽選 → **argmax 取最高**（非隨機）；
+> ③負載/輪替＝**當期 sprint**、契合＝**全歷史**；④契合只用 `Fault Domain`（去掉 `類型`）；
+> ⑤無領域時由**標題關鍵字推測**領域。**現況請以 `README.md` 的「Auto-assign (派工建議)」節與
+> `lib/nox/roulette.rb` 為準。**
 
 ---
 
