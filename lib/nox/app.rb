@@ -1212,6 +1212,16 @@ module Nox
         @tui.text_span(content: "  契合 ", style: @s_dim),
         @tui.text_span(content: format("%.2f", w[:ft]), style: @s_cyan),
       ])
+      dom = data[:effective_domains] || []
+      if dom.empty?
+        rows << @tui.text_line(spans: [@tui.text_span(content: "領域  無 → 契合中性", style: @s_dim)])
+      else
+        rows << @tui.text_line(spans: [
+          @tui.text_span(content: "領域  #{dom.join('、')} ", style: @s_dim),
+          @tui.text_span(content: data[:domain_inferred] ? "（標題推測）" : "（已標）",
+                         style: data[:domain_inferred] ? @s_yellow : @s_green),
+        ])
+      end
       rows << @tui.text_line(spans: [])
 
       # results are pre-sorted by score (desc); rank 0 is the recommendation.
@@ -1266,6 +1276,7 @@ module Nox
         line.call("  可用 A   未完成點數越少越高（多人平分）· 本期 sprint", @s_dim),
         line.call("  輪替 Fr  近 14 天被指派越少越高 · 本期 sprint", @s_dim),
         line.call("  契合 Ft  Fault Domain 對個人歷史；無領域→0.5 · 全歷史", @s_dim),
+        line.call("           無領域時由標題關鍵字推測（標示「推測」，約7成準）", @s_dim),
         nl,
         line.call("優先級決定權重（可用 / 輪替 / 契合）", @s_bold_cyan),
         line.call("  P0·P1   0.5 / 0.1 / 0.4   急：給最閒最懂的", @s_dim),

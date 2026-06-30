@@ -69,7 +69,7 @@ load/rotation, accumulated expertise (all history) for fit.
 |-----------|---------|-------|--------------|
 | 可用 Availability (A) | how free they are now | **current sprint** | sum of `預估點數` over open (not Done/Archived) tasks, multi-owner points split → least-loaded = 1.0 |
 | 輪替 Rotation (Fr) | how little they've been assigned lately | **current sprint** | count of tasks created in the last 14 days (`Created time` ≈ assignment) → fewest = 1.0 |
-| 契合 Fit (Ft) | domain expertise | **all history** | overlap of the task's `Fault Domain` with their full task history; neutral 0.5 when the task has no Fault Domain → best match = 1.0 (ticket `類型` is deliberately excluded — it rewards volume, not expertise) |
+| 契合 Fit (Ft) | domain expertise | **all history** | overlap of the task's `Fault Domain` with their full task history; neutral 0.5 when the task has no Fault Domain → best match = 1.0 (ticket `類型` excluded — it rewards volume, not expertise). When a task has **no** Fault Domain, it's **inferred from the title** via a curated keyword map (`DOMAIN_KEYWORDS`, ~73% precision when it fires) and flagged as 「推測」 in the popup |
 
 Why two scales: "how busy you are" is a *now* question (this sprint), but "do you
 know this domain" is an *accumulated* trait — one sprint is too short and noisy to

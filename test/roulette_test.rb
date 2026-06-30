@@ -63,6 +63,18 @@ class RouletteTest < Minitest::Test
     res[:results].each { |r| assert_equal 0.5, r[:ft] }
   end
 
+  def test_infer_domains_from_title
+    assert_equal ["外部渠道與系統整合"], R.infer_domains("Omnichat 串接失敗")
+    assert_includes R.infer_domains("AI 腳本推理邏輯錯誤"), "AI 腳本與推理邏輯"
+    assert_equal [], R.infer_domains("某客戶月報整理")          # no domain keyword -> no guess
+    assert_equal [], R.infer_domains(nil)
+  end
+
+  def test_infer_domains_ascii_word_boundary
+    # the keyword "line" must not match inside "online" / "deadline"
+    assert_equal [], R.infer_domains("online dashboard deadline")
+  end
+
   def test_temperature_controls_peakiness
     low  = R.softmax([1.0, 0.5], 0.1)
     high = R.softmax([1.0, 0.5], 1.0)
@@ -75,7 +87,7 @@ class RouletteTest < Minitest::Test
   FT = Struct.new(:owner_names, :owners, :status, :points, :created_at, :domains, :type)
 
   def test_evaluate_filters_unresolved_owners_and_returns_order
-    task  = Struct.new(:priority, :domains, :type).new("High", [], nil)
+    task  = Struct.new(:priority, :domains, :title).new("High", [], "月報整理") # title has no domain keyword
     # Hsiao Jimmy intentionally absent from the workspace users.
     users = [{ id: "a", name: "Adora Xu" }, { id: "c", name: "Lin CJ" }, { id: "g", name: "Galen Lin" }]
     sprint = [
@@ -91,6 +103,26 @@ class RouletteTest < Minitest::Test
     assert_equal 3, res[:results].size
     assert res[:results].all? { |r| r[:user_id] }, "every scored owner must have a user_id"
     assert_includes res[:order], res[:recommendation]
+  end
+
+  def four_users
+    [{ id: "a", name: "Adora Xu" }, { id: "c", name: "Lin CJ" },
+     { id: "g", name: "Galen Lin" }, { id: "j", name: "Hsiao Jimmy" }]
+  end
+
+  def test_evaluate_infers_domain_when_untagged
+    task = Struct.new(:priority, :domains, :title).new("High", [], "Omnichat 串接失敗")
+    res = R.evaluate(sprint_tasks: [], history_by_name: {}, task: task, users: four_users, today: Date.new(2026, 6, 22))
+    assert_equal ["外部渠道與系統整合"], res[:effective_domains]
+    assert_equal true, res[:domain_inferred]
+  end
+
+  def test_evaluate_real_domain_beats_title_inference
+    # real domain set -> title is ignored, not flagged inferred
+    task = Struct.new(:priority, :domains, :title).new("High", ["AI 知識庫與檢索"], "Omnichat 串接失敗")
+    res = R.evaluate(sprint_tasks: [], history_by_name: {}, task: task, users: four_users, today: Date.new(2026, 6, 22))
+    assert_equal ["AI 知識庫與檢索"], res[:effective_domains]
+    assert_equal false, res[:domain_inferred]
   end
 
   def test_aggregate_splits_sprint_points_and_reads_fit_from_history
