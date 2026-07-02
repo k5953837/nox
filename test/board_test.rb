@@ -50,4 +50,36 @@ class BoardTest < Minitest::Test
     @board.search("tokenizer")
     assert_equal({ "In Progress" => 1 }, @board.status_counts)
   end
+
+  # ── total_count 反映當前候選池（避免標題出現 5/1 這種矛盾分數）────────────
+
+  def test_total_count_matches_root_only_count_when_not_searching
+    assert_equal @board.all_tasks.length, @board.total_count
+  end
+
+  def test_total_count_includes_sub_tasks_while_searching
+    @board.search("tokenizer")
+    assert_equal 3, @board.total_count
+  end
+
+  def test_filtered_never_exceeds_total_count_while_searching
+    @board.search("tokenizer")
+    assert_operator @board.filtered_tasks.length, :<=, @board.total_count
+  end
+
+  # ── 搜尋比對非標題欄位 ──────────────────────────────────────────────────
+
+  def test_search_matches_sub_task_by_status
+    blocked = make_task(id: "s2", title: "unrelated title xyz", status: "Blocked", parent_id: "p1")
+    board   = Nox::Board.new([@parent, blocked, @other])
+    board.search("blocked")
+    assert_includes board.filtered_tasks, blocked
+  end
+
+  # ── 搜尋字串大小寫不敏感 ────────────────────────────────────────────────
+
+  def test_search_query_is_case_insensitive
+    @board.search("TOKENIZER")
+    assert_includes @board.filtered_tasks, @sub
+  end
 end

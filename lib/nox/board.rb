@@ -78,6 +78,14 @@ module Nox
       counts
     end
 
+    # Size of the pool filtered_tasks is drawn from — grows to include
+    # sub-tasks while searching, so callers computing a "N/total" label stay
+    # consistent instead of comparing a search-widened numerator against a
+    # root-only denominator.
+    def total_count
+      candidate_pool.size
+    end
+
     private
 
     # Sub-tasks only surface when a specific owner is selected or a search is
@@ -112,7 +120,7 @@ module Nox
     end
 
     def match_search?(task)
-      return true if @search_query.empty?
+      return true unless searching?
       q = @search_query.downcase
       task.title.downcase.include?(q) ||
         task.assignee&.downcase&.include?(q) ||
