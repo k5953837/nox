@@ -434,7 +434,7 @@ module Nox
 
       selected_idx = @owner_list_state&.selected || 0
       active_owner = selected_idx == 0 ? nil : @board.all_owners[selected_idx - 1]
-      base = active_owner ? "#{active_owner} (#{tasks.length})" : "Tasks (#{tasks.length}/#{@board.all_tasks.length})"
+      base = active_owner ? "#{active_owner} (#{tasks.length})" : "Tasks (#{tasks.length}/#{@board.total_count})"
       base += " · #{@board.status_filter.size} status" if @board.status_filter.size.positive?
       title = " #{base} "
 
