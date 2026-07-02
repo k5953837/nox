@@ -80,10 +80,15 @@ module Nox
 
     private
 
-    # Sub-tasks only surface when a specific owner is selected — the "(all)"
-    # view stays root-only so it isn't flooded with child rows.
+    # Sub-tasks only surface when a specific owner is selected or a search is
+    # active — the browsing "(all)" view stays root-only so it isn't flooded
+    # with child rows.
     def candidate_pool
-      @owner_filter ? @every_task : @all_tasks
+      @owner_filter || searching? ? @every_task : @all_tasks
+    end
+
+    def searching?
+      !@search_query.empty?
     end
 
     def ingest(tasks)
